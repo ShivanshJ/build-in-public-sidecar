@@ -4,6 +4,7 @@
 the session cookies live in ~/.agent_sessions_gtm/browser). `code_gtm sync` then reads your own profile headlessly.
 """
 import re
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -98,14 +99,52 @@ def _context(p, headless: bool):
     )
 
 
+HOME_URL = {"x": "https://x.com/home", "linkedin": "https://www.linkedin.com/feed/"}
+
+
+def _reuse_chrome_login(site: str) -> bool:
+    """Offer to copy this site's cookies from the everyday Chrome. True when gtm's profile ends up signed in."""
+    from .chrome_cookies import DOMAINS, CookieImportError, import_login
+
+    if not sys.stdin.isatty():
+        return False
+    hosts = " and ".join(DOMAINS[site])
+    print(f"I can reuse the {site} login from your everyday Chrome instead of asking you to sign in again.\n"
+          f"That reads only your Chrome cookies for {hosts} (macOS will ask for your login password to unlock Chrome's key)\n"
+          f"and copies them into gtm's own profile in {home() / 'browser'}. Nothing is changed in Chrome.")
+    if input("Reuse it? [y/N] ").strip().lower() not in ("y", "yes"):
+        return False
+    try:
+        cookies = import_login(site)
+        with _playwright() as p:
+            ctx = _context(p, headless=True)
+            try:
+                ctx.add_cookies(cookies)
+                page = ctx.pages[0] if ctx.pages else ctx.new_page()
+                page.goto(HOME_URL[site], wait_until="domcontentloaded")
+                page.wait_for_timeout(2500)
+                _check_login(page, site)
+            finally:
+                ctx.close()
+    except (CookieImportError, SessionExpired) as e:
+        print(f"Could not reuse it: {e}")
+        return False
+    except Exception as e:
+        print(f"Could not reuse it ({type(e).__name__}: {e})")
+        return False
+    print(f"Copied {len(cookies)} cookies; {site} is signed in.")
+    return True
+
+
 def login(conn, site: str) -> None:
-    with _playwright() as p:
-        ctx = _context(p, headless=False)
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        page.goto(LOGIN_URL[site])
-        print("A separate Chrome window opened (gtm's own profile, not your everyday one, so you start signed out).")
-        input(f"Sign in to {site} there (\"Continue with Google\" works), then press Enter here... ")
-        ctx.close()
+    if not _reuse_chrome_login(site):
+        with _playwright() as p:
+            ctx = _context(p, headless=False)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            page.goto(LOGIN_URL[site])
+            print("A separate Chrome window opened (gtm's own profile, not your everyday one, so you start signed out).")
+            input(f"Sign in to {site} there (\"Continue with Google\" works), then press Enter here... ")
+            ctx.close()
     kv_set(conn, f"login_{site}", iso_now())
 
 

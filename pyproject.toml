@@ -5,8 +5,8 @@ requires-python = ">=3.11"
 dependencies = ["fastembed>=0.4", "numpy", "requests"]
 
 [project.optional-dependencies]
-browser = ["playwright"]
-dev = ["pytest", "playwright"]
+browser = ["playwright", "cryptography"]
+dev = ["pytest", "playwright", "cryptography"]
 
 [project.scripts]
 code_gtm = "gtm.cli:main"

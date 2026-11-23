@@ -400,3 +400,59 @@ def test_save_pulled_prints_each_post_and_reports_new_vs_updated(conn, capsys):
     assert save_pulled(conn, posts) == (0, 1)
     out = capsys.readouterr().out
     assert "new" in out and "updated" in out and "Shipped the thing. It took three weeks" in out and "3 likes" in out
+
+
+def _chrome_profile(tmp_path, key, rows):
+    """A fake Chrome profile whose Cookies db is encrypted the way Chrome does on macOS."""
+    import hashlib
+    import sqlite3
+
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    def enc(host, value, host_hash):
+        data = (hashlib.sha256(host.encode()).digest() if host_hash else b"") + value.encode()
+        pad = padding.PKCS7(128).padder()
+        e = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).encryptor()
+        return b"v10" + e.update(pad.update(data) + pad.finalize()) + e.finalize()
+
+    prof = tmp_path / "Profile 1"
+    (prof / "Network").mkdir(parents=True)
+    db = sqlite3.connect(prof / "Network" / "Cookies")
+    db.execute("create table cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite)")
+    for host, name, value, host_hash in rows:
+        db.execute("insert into cookies values (?,?,?,?,?,?,?,?,?)",
+                   (host, name, "", enc(host, value, host_hash), "/", (1_800_000_000 + 11644473600) * 1_000_000, 1, 1, 1))
+    db.commit()
+    db.close()
+    return prof
+
+
+def test_chrome_cookie_import_reads_only_the_requested_site(tmp_path, monkeypatch):
+    from gtm import chrome_cookies as cc
+
+    key = b"k" * 16
+    prof = _chrome_profile(tmp_path, key, [
+        (".x.com", "auth_token", "secret-x", True), ("x.com", "ct0", "csrf", False),
+        (".google.com", "SID", "google-secret", True), (".linkedin.com", "li_at", "li", True),
+        (".notx.com", "auth_token", "lookalike", True)])
+    monkeypatch.setattr(cc, "safe_storage_key", lambda: key)
+    cookies = cc.import_login("x", [prof])
+    assert {c["name"]: c["value"] for c in cookies} == {"auth_token": "secret-x", "ct0": "csrf"}
+    assert cookies[0]["expires"] == 1_800_000_000 and cookies[0]["sameSite"] == "Lax" and cookies[0]["httpOnly"]
+
+
+def test_chrome_cookie_import_skips_profiles_not_signed_in(tmp_path, monkeypatch):
+    from gtm import chrome_cookies as cc
+
+    key = b"k" * 16
+    prof = _chrome_profile(tmp_path, key, [(".x.com", "guest_id", "g", True)])
+    monkeypatch.setattr(cc, "safe_storage_key", lambda: key)
+    with pytest.raises(cc.CookieImportError, match="signed in to x"):
+        cc.import_login("x", [prof])
+
+
+def test_login_falls_back_to_window_when_not_interactive(conn, monkeypatch):
+    from gtm import browser
+
+    assert browser._reuse_chrome_login("x") is False  # pytest stdin is not a tty: never touches Chrome or the Keychain
