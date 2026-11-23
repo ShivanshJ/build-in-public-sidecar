@@ -5,6 +5,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import ui
+
 
 def home() -> Path:
     p = Path(os.environ.get("GTM_HOME") or Path.home() / ".agent_sessions_gtm")
@@ -104,6 +106,17 @@ def hours_since(ts: str | None) -> float | None:
     return (datetime.now(timezone.utc) - then).total_seconds() / 3600
 
 
+STEP_LABELS = {
+    "ingest": "reading your Claude Code sessions",
+    "embed": "building the search index (the first run downloads the models)",
+    "draft": "drafting posts",
+    "learn": "learning your writing style from your posts",
+    "sync_x": "pulling your posts from X",
+    "sync_linkedin": "pulling your posts from LinkedIn",
+    "tick": "running the scheduled job",
+}
+
+
 class record:
     """Log one pipeline step to `runs`. Use `with record(conn, "sync_x") as r: ...; r.detail = "12 posts"`.
 
@@ -122,9 +135,12 @@ class record:
     def __enter__(self):
         self.started = iso_now()
         self.base = dict(USAGE)
+        self._spinner = ui.working(STEP_LABELS.get(self.step, self.step))
+        self._spinner.__enter__()
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        self._spinner.__exit__(None, None, None)
         if exc:
             self.status, self.detail = "error", f"{type(exc).__name__}: {exc}"[:500]
         used = {k: USAGE[k] - self.base[k] for k in USAGE}
@@ -137,5 +153,7 @@ class record:
         )
         self.conn.commit()
         tok = f"  [{used['calls']} llm call(s), {used['tokens_in'] + used['tokens_out']:,} tokens, ${used['cost_usd']:.2f}]" if used["calls"] else ""
-        print(f"{datetime.now():%H:%M:%S} {self.step:<14} {self.status:<6} {' '.join(str(self.detail).split())[:140]}{tok}", flush=True)
+        mark, paint = {"ok": ("✓", "32"), "skip": ("-", "33"), "error": ("✗", "31")}[self.status]
+        mark = f"\033[{paint}m{mark}\033[0m" if ui.color() else mark
+        ui.say(f"{ui.dim(f'{datetime.now():%H:%M:%S}')}  {mark} {self.step:<13} {' '.join(str(self.detail).split())[:140]}{tok}")
         return bool(exc) and self.swallow

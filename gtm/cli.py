@@ -80,7 +80,6 @@ def cmd_sync(a, conn):
     for site in [a.site] if a.site else SITES:
         with record(conn, f"sync_{site}", swallow=True) as r:
             sync_site(conn, site, r, force=True)
-        print(f"{site}: {r.status}  {r.detail}")
 
 
 def cmd_login(a, conn):
@@ -100,7 +99,10 @@ def cmd_draft(a, conn):
     from . import search
     from .draft import draft
 
-    search.embed_pending(conn)
+    from . import ui
+
+    with ui.working("building the search index"):
+        search.embed_pending(conn)
     drafts = draft(conn, about=a.about, hours=a.hours, send=not a.no_send)
     if a.no_send:
         for d in drafts:
@@ -186,7 +188,7 @@ def cmd_demo(a, conn):
     from collections import Counter
     from datetime import datetime, timedelta, timezone
 
-    from . import search, status
+    from . import search, status, ui
     from .db import record
     from .draft import draft
     from .ingest import ingest_file
@@ -231,7 +233,12 @@ def cmd_demo(a, conn):
 
     print("\nrunning the real pipeline on your sessions (first run downloads the search models):\n")
     with record(conn, "ingest", swallow=True) as r:
-        r.detail = f"{sum(ingest_file(conn, f) for f in files)} new chunks"
+        total = 0
+        for name in picked:
+            n = sum(ingest_file(conn, f) for f in files if short(f) == name)
+            total += n
+            ui.say(f"  {name}: {n} messages")
+        r.detail = f"{total} new chunks"
     with record(conn, "embed", swallow=True) as r:
         r.detail = f"{search.embed_pending(conn)} chunks"
     newest = conn.execute("SELECT max(ts) FROM chunks WHERE role='user'").fetchone()[0]

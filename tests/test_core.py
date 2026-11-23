@@ -369,3 +369,23 @@ def test_web_flag_opens_dashboard_for_status_and_log(conn, capsys, monkeypatch):
     (home() / "status.html").unlink()
     cli.main(["status", "--web"])
     assert (home() / "status.html").exists()
+
+
+def test_snippet_shows_first_sentence_trimmed_with_dots():
+    from gtm.ui import snippet
+
+    assert snippet("gm") == "gm"
+    assert snippet("Shipped it. Then the whole thing broke on Tuesday because the retry loop never backed off.") == \
+        "Shipped it. Then the whole thing broke on Tuesday because the retry loop never..."
+    assert snippet("A" * 200) == "A" * 80 + "..."
+    assert len(snippet("word " * 100)) <= 83
+
+
+def test_save_pulled_prints_each_post_and_reports_new_vs_updated(conn, capsys):
+    from gtm.x_posts import _post, save_pulled
+
+    posts = [_post("1", "Shipped the thing. It took three weeks and a lot of coffee to get it right.", None, likes=3)]
+    assert save_pulled(conn, posts) == (1, 0)
+    assert save_pulled(conn, posts) == (0, 1)
+    out = capsys.readouterr().out
+    assert "new" in out and "updated" in out and "Shipped the thing. It took three weeks" in out and "3 likes" in out

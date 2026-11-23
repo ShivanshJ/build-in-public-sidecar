@@ -13,9 +13,10 @@ def score(likes: int, reposts: int, replies: int) -> float:
     return likes + 2 * reposts + 3 * replies
 
 
-def upsert(conn, post: dict) -> None:
+def upsert(conn, post: dict) -> bool:
     """Insert, or refresh metrics on an existing post. A post is the same if its id matches, or (for posts
-    imported from a file, which have no platform id) its text is identical, so re-syncing never duplicates."""
+    imported from a file, which have no platform id) its text is identical, so re-syncing never duplicates.
+    Returns True when the post was new."""
     row = conn.execute("SELECT id FROM my_posts WHERE id=?", (post["id"],)).fetchone() or conn.execute(
         "SELECT id FROM my_posts WHERE platform=? AND text=?", (post["platform"], post["text"])
     ).fetchone()
@@ -25,12 +26,28 @@ def upsert(conn, post: dict) -> None:
                WHERE id=?""",
             (post["likes"], post["reposts"], post["replies"], post["score"], post["created_at"], row["id"]),
         )
+        return False
     else:
         conn.execute(
             """INSERT INTO my_posts(id, platform, text, created_at, likes, reposts, replies, score)
                VALUES(:id,:platform,:text,:created_at,:likes,:reposts,:replies,:score)""",
             post,
         )
+        return True
+
+
+def save_pulled(conn, posts: list[dict]) -> tuple[int, int]:
+    """Store pulled posts, printing each one (first sentence only). Returns (new, updated)."""
+    from . import ui
+
+    ui.say(f"  pulled {len(posts)} posts:")
+    new = 0
+    for post in posts:
+        is_new = upsert(conn, post)
+        new += is_new
+        ui.show_post(post, is_new)
+    conn.commit()
+    return new, len(posts) - new
 
 
 def _post(id_, text, created_at, likes=0, reposts=0, replies=0, platform="x") -> dict:
@@ -68,11 +85,11 @@ def import_text(conn, path: str, platform: str) -> int:
     return n
 
 
-def sync_api(conn, limit: int = 100) -> int:
+def sync_api(conn, limit: int = 100) -> tuple[int, int, int]:
     """Pull your latest posts + metrics via the X API v2 (needs x_bearer_token and x_username)."""
     token, user = cfg("x_bearer_token"), cfg("x_username")
     if not (token and user):
-        return 0
+        return 0, 0, 0
     h = {"Authorization": f"Bearer {token}"}
     uid = requests.get(f"https://api.x.com/2/users/by/username/{user}", headers=h, timeout=30).json()["data"]["id"]
     r = requests.get(
@@ -83,10 +100,8 @@ def sync_api(conn, limit: int = 100) -> int:
         timeout=30,
     )
     r.raise_for_status()
-    n = 0
-    for t in r.json().get("data", []):
-        m = t["public_metrics"]
-        upsert(conn, _post(t["id"], t["text"], t["created_at"], m["like_count"], m["retweet_count"], m["reply_count"]))
-        n += 1
-    conn.commit()
-    return n
+    posts = [_post(t["id"], t["text"], t["created_at"], t["public_metrics"]["like_count"],
+                   t["public_metrics"]["retweet_count"], t["public_metrics"]["reply_count"])
+             for t in r.json().get("data", [])]
+    new, updated = save_pulled(conn, posts)
+    return len(posts), new, updated

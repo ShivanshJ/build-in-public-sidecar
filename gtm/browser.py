@@ -7,8 +7,9 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
+from . import ui
 from .db import cfg, home, hours_since, iso_now, kv_get, kv_set
-from .x_posts import _post, sync_api, upsert
+from .x_posts import _post, save_pulled, sync_api
 
 SITES = ("x", "linkedin")
 LOGIN_URL = {"x": "https://x.com/i/flow/login", "linkedin": "https://www.linkedin.com/login"}
@@ -114,15 +115,17 @@ def _check_login(page, site: str) -> None:
 
 def _scrape(page, js: str, rounds: int) -> list[dict]:
     seen: dict[str, dict] = {}
-    for _ in range(rounds):
+    for i in range(rounds):
         for r in page.evaluate(js):
             seen[r.get("href") or r.get("urn") or str(len(seen))] = r
+        ui.update(f"scrolling your profile, round {i + 1}/{rounds} ({len(seen)} posts seen)")
         page.mouse.wheel(0, 2500)
         time.sleep(1.2)
     return list(seen.values())
 
 
 def pull(site: str, rounds: int = 6) -> list[dict]:
+    ui.update("starting a headless Chrome with your saved login")
     with _playwright() as p:
         ctx = _context(p, headless=True)
         try:
@@ -144,6 +147,7 @@ def pull(site: str, rounds: int = 6) -> list[dict]:
 def _pull_x(page, rounds: int) -> list[dict]:
     user = cfg("x_username")
     if not user:
+        ui.update("finding your X handle")
         page.goto("https://x.com/home", wait_until="domcontentloaded")
         page.wait_for_timeout(2500)
         _check_login(page, "x")
@@ -151,6 +155,7 @@ def _pull_x(page, rounds: int) -> list[dict]:
         user = href.rstrip("/").split("/")[-1]
         if not user:
             raise RuntimeError("could not detect your X handle; set x_username in config.json")
+    ui.update(f"opening x.com/{user}")
     page.goto(f"https://x.com/{user}", wait_until="domcontentloaded")
     page.wait_for_timeout(2500)
     _check_login(page, "x")
@@ -158,6 +163,7 @@ def _pull_x(page, rounds: int) -> list[dict]:
 
 
 def _pull_linkedin(page, rounds: int) -> list[dict]:
+    ui.update("opening your LinkedIn profile")
     page.goto("https://www.linkedin.com/in/me/", wait_until="domcontentloaded")
     page.wait_for_timeout(2500)
     _check_login(page, "linkedin")
@@ -182,11 +188,12 @@ def sync_site(conn, site: str, r, force: bool = False) -> None:
         r.skip(f"synced {age:.0f}h ago (every {float(cfg('sync_hours', 20)):g}h; `gtm sync` forces)")
         return
     if api:
-        r.detail = f"{sync_api(conn)} posts via api"
+        ui.update("asking the X API for your latest posts")
+        total, new, updated = sync_api(conn)
+        how = "api"
     else:
         posts = pull(site)
-        for post in posts:
-            upsert(conn, post)
-        conn.commit()
-        r.detail = f"{len(posts)} posts via browser"
+        new, updated = save_pulled(conn, posts)
+        total, how = len(posts), "browser"
+    r.detail = f"{total} posts via {how}: {new} new, {updated} already saved (likes and replies refreshed)"
     kv_set(conn, f"last_sync_{site}", iso_now())

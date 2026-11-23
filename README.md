@@ -50,7 +50,7 @@ This adds a `Stop` and `SessionEnd` hook to `~/.claude/settings.json` (a backup 
 ```sh
 gtm login x            # a Chrome window opens: sign in yourself, then press Enter
 gtm login linkedin     # same
-gtm sync               # pull your past posts and their likes/replies
+gtm sync               # pull your past posts and their likes/replies (lists each one as it's saved)
 ```
 
 gtm never sees your password; the session stays in a dedicated browser profile on your machine. No Chrome, or don't want browser access? Import instead: `gtm import-x tweets.js` (your X archive) or `gtm import-posts posts.txt --platform linkedin`. With no past posts, drafts use a plain default style.
@@ -116,7 +116,7 @@ After that you don't need to do anything: when there's something worth posting, 
 
 ## Is it working?
 
-Every step (ingest, each account sync, embed, draft, learn) records its outcome: when it ran, whether the scheduler or you started it, the command, the result, and the tokens and cost it used. `gtm tick` prints one line per step, and scheduled runs write the same lines to `~/.agent_sessions_gtm/tick.log`.
+Every step (ingest, each account sync, embed, draft, learn) records its outcome: when it ran, whether the scheduler or you started it, the command, the result, and the tokens and cost it used. Long steps show a live spinner with elapsed seconds and say what they're doing: which angles Claude found, each post `gtm sync` pulled (first sentence only, marked new or updated), and each draft written. Scheduled runs write the same lines, minus the spinner, to `~/.agent_sessions_gtm/tick.log`.
 
 ```
 $ gtm status

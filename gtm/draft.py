@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 
-from . import llm, notify, search
+from . import llm, notify, search, ui
 from .db import home, iso_now, kv_get, kv_set, record
 from .ingest import redact
 
@@ -141,16 +141,34 @@ def parse_drafts(out: str) -> list[dict]:
 def draft(conn, about: str | None = None, hours: int = 24, send: bool = True) -> list[dict]:
     history = ""
     if about:
+        ui.say(f'  searching your sessions for "{about}"')
         hits = search.search(conn, about, k=10)
         material = "\n\n".join(f"[{(h['ts'] or '')[:10]}] {h['text']}" for h in hits)
+        ui.say(f"  found {len(hits)} passages")
     else:
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         material = digest(conn, since)
-        if material.strip():
-            history = history_for(conn, propose_angles(material), before=since)
+        if not material.strip():
+            ui.say(f"  no Claude Code activity in the last {hours}h, nothing to write about")
+            return []
+        ui.say(f"  read the last {hours}h of work: {material.count('## project:')} session(s)")
+        with ui.working("asking Claude what's worth posting about"):
+            angles = propose_angles(material)
+        ui.say(f"  Claude found {len(angles)} angle(s):")
+        for a in angles:
+            ui.say(f"    - {ui.snippet(a.get('angle', ''), 90, 0)}")
+        if angles:
+            with ui.working("searching your older sessions for related work"):
+                history = history_for(conn, angles, before=since)
+            ui.say(f"  found {history.count(chr(10) * 2) + 1 if history else 0} related older passage(s)")
     if not material.strip():
         return []
-    drafts = parse_drafts(llm.complete(build_prompt(material, conn, history=history)))
+    with ui.working("asking Claude to write the posts"):
+        out = llm.complete(build_prompt(material, conn, history=history))
+    drafts = parse_drafts(out)
+    ui.say(f"  wrote {len(drafts)} draft(s):")
+    for d in drafts:
+        ui.say(f"    {'X' if d['platform'] == 'x' else 'LinkedIn':<8} {ui.snippet(d['text'])}")
     for d in drafts:
         cur = conn.execute(
             "INSERT INTO drafts(created_at, platform, text, why) VALUES(?,?,?,?)",
@@ -159,7 +177,8 @@ def draft(conn, about: str | None = None, hours: int = 24, send: bool = True) ->
         d["id"] = cur.lastrowid
     conn.commit()
     if send and drafts:
-        notify.send_batch(drafts)
+        if notify.send_batch(drafts) == "popup":
+            ui.say("  opened the drafts popup in your browser")
         conn.executemany("UPDATE drafts SET status='sent' WHERE id=?", [(d["id"],) for d in drafts])
         conn.commit()
     return drafts
