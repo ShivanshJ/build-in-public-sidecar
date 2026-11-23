@@ -169,12 +169,15 @@ def draft(conn, about: str | None = None, hours: int = 24, send: bool = True) ->
     ui.say(f"  wrote {len(drafts)} draft(s):")
     for d in drafts:
         ui.say(f"    {'X' if d['platform'] == 'x' else 'LinkedIn':<8} {ui.snippet(d['text'])}")
+    now = iso_now()
     for d in drafts:
         cur = conn.execute(
             "INSERT INTO drafts(created_at, platform, text, why) VALUES(?,?,?,?)",
-            (iso_now(), d["platform"], d["text"], d["why"]),
+            (now, d["platform"], d["text"], d["why"]),
         )
-        d["id"] = cur.lastrowid
+        d["id"], d["created_at"] = cur.lastrowid, now
+    if not about:
+        kv_set(conn, "last_draft_ts", now)  # so a scheduled tick doesn't redraft what a manual run already covered
     conn.commit()
     if send and drafts:
         if notify.send_batch(drafts) == "popup":
@@ -253,17 +256,28 @@ def _tick(conn, force: bool) -> str:
 
         last_draft = kv_get(conn, "last_draft_ts")
         since = last_draft or (now - timedelta(hours=CATCHUP_MIN_HOURS)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        new = conn.execute("SELECT count(*) FROM chunks WHERE role='user' AND ts >= ?", (since,)).fetchone()[0]
+        new = conn.execute("SELECT count(DISTINCT substr(uuid, 1, instr(uuid, ':') - 1)) FROM chunks WHERE role='user' AND ts >= ?",
+                           (since,)).fetchone()[0]
         if new < MIN_NEW_USER_MSGS:
+            why = (f"no new Claude Code prompts since {'your last draft' if last_draft else 'yesterday'}" if new == 0 else
+                   f"only {new} new prompt{'s' if new != 1 else ''} since {'your last draft' if last_draft else 'yesterday'} "
+                   f"(needs {MIN_NEW_USER_MSGS})")
             with record(conn, "draft") as r:
-                r.skip(f"only {new} new prompts since {since}")
-            return f"skip: only {new} new prompts since {since}"
+                r.skip(why)
+            return f"skip: {why}"
         away = (now - _parse_ts(last_draft)).total_seconds() / 3600 if last_draft else CATCHUP_MIN_HOURS
         hours = int(min(max(away, CATCHUP_MIN_HOURS), CATCHUP_MAX_HOURS))
-        with record(conn, "draft") as r:
-            drafts = draft(conn, hours=hours)
-            r.detail = f"{len(drafts)} drafts from the last {hours}h"
-        kv_set(conn, "last_draft_ts", iso_now())
+        try:
+            with record(conn, "draft") as r:
+                drafts = draft(conn, hours=hours)
+                if drafts:
+                    r.detail = f"{len(drafts)} drafts from the last {hours}h"
+                else:
+                    r.skip(f"nothing worth posting about in the last {hours}h")
+        except Exception:
+            with record(conn, "learn") as r:
+                r.skip("did not run because drafting failed")
+            raise
         if kv_get(conn, "last_learn_day") != iso_now()[:10] and conn.execute("SELECT count(*) FROM my_posts").fetchone()[0]:
             with record(conn, "learn", swallow=True) as r:
                 learn(conn)

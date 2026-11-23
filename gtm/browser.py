@@ -210,9 +210,12 @@ def _pull_linkedin(page, rounds: int) -> list[dict]:
     page.goto("https://www.linkedin.com/in/me/", wait_until="domcontentloaded")
     page.wait_for_timeout(2500)
     _check_login(page, "linkedin")
-    page.goto(page.url.split("?")[0].rstrip("/") + "/recent-activity/shares/", wait_until="domcontentloaded")
-    page.wait_for_timeout(2500)
+    page.goto(page.url.split("?")[0].rstrip("/") + "/recent-activity/shares/", wait_until="domcontentloaded", timeout=60_000)
     _check_login(page, "linkedin")
+    try:
+        page.wait_for_selector('[data-urn^="urn:li:activity"]', timeout=20_000)
+    except Exception:
+        pass  # no posts, or the layout changed; pull() screenshots it
     return normalize_linkedin(_scrape(page, LI_JS, rounds))
 
 

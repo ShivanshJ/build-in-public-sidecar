@@ -21,7 +21,7 @@ PAGE = """<!doctype html>
   .card { background: #fff; border: 1px solid #e3e3df; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
   .meta { display: flex; gap: 10px; align-items: baseline; margin-bottom: 10px; }
   .badge { font-size: 11px; font-weight: 600; letter-spacing: .04em; padding: 2px 8px; border-radius: 99px; background: #1a1a1a; color: #fff; }
-  .why { color: #777; font-size: 13px; }
+  .why, .when { color: #777; font-size: 13px; } .when { font-weight: 600; }
   textarea { width: 100%; box-sizing: border-box; border: 1px solid #e3e3df; border-radius: 8px; padding: 10px; font: inherit; resize: none; overflow: hidden; }
   .row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
   .spacer { flex: 1; } .count { color: #777; font-size: 13px; } .count.over { color: #c0392b; font-weight: 600; }
@@ -30,7 +30,7 @@ PAGE = """<!doctype html>
 </style></head>
 <body><main>
 <h1>__COUNT__ drafts ready</h1>
-<p class="sub">__WHEN__. Edit freely, then post. Nothing is sent until you click.</p>
+<p class="sub">Edit freely, then post. Nothing is sent until you click.</p>
 __CARDS__
 </main>
 <script>
@@ -56,7 +56,7 @@ document.querySelectorAll(".card").forEach(c => {
 """
 
 CARD = """<section class="card" data-platform="{platform}">
-  <div class="meta"><span class="badge">{label}</span><span class="why">{why}</span></div>
+  <div class="meta"><span class="badge">{label}</span><span class="when">{when}</span><span class="why">{why}</span></div>
   <textarea rows="5" spellcheck="true">{text}</textarea>
   <div class="row"><span class="count"></span><span class="spacer"></span>
     <button class="copy" type="button">Copy</button>
@@ -71,20 +71,26 @@ def intent_url(platform: str, text: str) -> str:
     return f"https://www.linkedin.com/feed/?shareActive=true&text={q}"
 
 
+def _when(created_at: str | None) -> str:
+    """When the draft was written, in local time (not when the page is opened)."""
+    from .status import when
+
+    return when(created_at) if created_at else ""
+
+
 def render_page(drafts: list[dict]) -> str:
     """Draft text is model output built from untrusted material, so everything is HTML-escaped."""
     cards = "".join(
         CARD.format(
             platform=d["platform"],
             label="X" if d["platform"] == "x" else "LinkedIn",
+            when=html.escape(_when(d.get("created_at"))),
             why=html.escape(d.get("why", "")),
             text=html.escape(d["text"]),
         )
         for d in drafts
     )
-    return (PAGE.replace("__COUNT__", str(len(drafts)))
-            .replace("__WHEN__", datetime.now().strftime("%a %b %d, %H:%M"))
-            .replace("__CARDS__", cards))
+    return PAGE.replace("__COUNT__", str(len(drafts))).replace("__CARDS__", cards)
 
 
 def open_file(path) -> None:

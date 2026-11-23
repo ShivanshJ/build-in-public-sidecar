@@ -1,8 +1,8 @@
-# gtm
+# build-in-public-sidecar
 
 Ready-to-post X and LinkedIn drafts, written in your own voice from what you actually built.
 
-gtm quietly saves your Claude Code sessions to a local database. A few times a day it reads what you worked on, searches your history for related earlier work (the same bug last month, how an idea evolved), and drafts posts. A page opens in your browser: edit a draft, click Post, and the X or LinkedIn composer opens prefilled. **Nothing is ever posted for you.**
+build-in-public-sidecar (`code_gtm` on the command line) quietly saves your Claude Code sessions to a local database. A few times a day it reads what you worked on, searches your history for related earlier work (the same bug last month, how an idea evolved), and drafts posts. A page opens in your browser: edit a draft, click Post, and the X or LinkedIn composer opens prefilled. **Nothing is ever posted for you.**
 
 ```
 Claude Code sessions ──► local database ──► drafts popup in your browser ──► you edit and post
@@ -24,7 +24,7 @@ Claude Code sessions ──► local database ──► drafts popup in your bro
 ### 1. Install
 
 ```sh
-git clone https://github.com/ShivanshJ/coder-gtm-machine && cd coder-gtm-machine
+git clone https://github.com/ShivanshJ/build-in-public-sidecar && cd build-in-public-sidecar
 uv tool install ".[browser]"
 ```
 
@@ -66,7 +66,7 @@ code_gtm schedule           # macOS: runs at 09:30, 13:30 and 18:30 every day
 `code_gtm draft` makes two model calls, so it uses real tokens. The scheduled run only drafts when you've done something new (3+ prompts since the last draft), so quiet days cost nothing. On Linux, add a cron line instead:
 
 ```
-30 9,13,18 * * *  GTM_TRIGGER=schedule /path/to/coder-gtm-machine/.venv/bin/code_gtm tick
+30 9,13,18 * * *  GTM_TRIGGER=schedule /path/to/build-in-public-sidecar/.venv/bin/code_gtm tick
 ```
 
 ### 6. See what it wrote, and check it's working
@@ -163,7 +163,7 @@ Drafts open as a local HTML page (no server, no network). Each card is editable,
 
 ## How it works
 
-- **Capture.** The hook reads the transcript path from Claude Code and ingests only new lines. It keeps user and assistant text, drops tool output and system reminders, redacts common secret patterns, and splits text into chunks of at most 1,200 characters. Standard library only, milliseconds per call, and it never fails your session.
+- **Capture.** The hook reads the transcript path from Claude Code and ingests only new lines. It keeps user and assistant text, drops tool output and system reminders, redacts common secret patterns, and splits text into chunks of at most 1,200 characters (a chunk is one searchable piece of a message; a long prompt becomes several). A scheduled run only drafts when there are at least 3 new prompts since the last draft, and `status` says so when it skips. Standard library only, milliseconds per call, and it never fails your session.
 - **Search.** SQLite FTS5 (BM25) plus `BAAI/bge-small-en-v1.5` embeddings (cosine in numpy), fused with reciprocal rank fusion, then the top 30 reranked by a cross-encoder (`Xenova/ms-marco-MiniLM-L-6-v2`). All local, CPU only.
 - **Drafting (two model calls).** First the model reads a digest of recent work and proposes up to 4 post angles, each with a search query. Each query searches only sessions *older* than the digest window. Then the writer gets the recent digest, the retrieved history with dates, your style guide, your best and latest posts as examples, and your last drafts (so angles don't repeat). It's told not to invent numbers or streaks and to skip anything confidential; drafts are redacted again and X posts over 280 characters are dropped. Retrieval only searches saved session text, never your repos or files.
 - **Learning your voice.** No fine-tuning. Posts are scored `likes + 2*reposts + 3*replies`; the best become few-shot examples and `style.md` is regenerated daily from them.

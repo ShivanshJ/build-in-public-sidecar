@@ -3,6 +3,7 @@ import html
 import os
 import plistlib
 import subprocess
+import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -94,8 +95,12 @@ def render_text(d: dict) -> str:
     if d["latest"]:
         out.append("\nlast run of each step (`code_gtm log` for history, `code_gtm status --web` for the dashboard):")
     for r in d["latest"]:
-        extra = f"  [last ok: {ago(d['last_ok'].get(r['step']))}]" if r["status"] == "error" else ""
-        out.append(f"  {r['step']:<13} {r['status']:<6} {ago(r['finished_at']):<9} {' '.join((r['detail'] or '').split())[:90]}  {_tokens(r)}{extra}")
+        detail = " ".join((r["detail"] or "").split())
+        err = r["status"] == "error"
+        extra = f"  [last ok: {ago(d['last_ok'].get(r['step']))}]" if err else ""
+        out.append(f"  {r['step']:<13} {r['status']:<6} {ago(r['finished_at']):<9} {detail[:90] if not err else ''}  {_tokens(r)}{extra}".rstrip())
+        if err:
+            out.append(textwrap.fill(detail, 100, initial_indent="      why: ", subsequent_indent="           "))
     return "\n".join(out)
 
 

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -117,6 +118,15 @@ STEP_LABELS = {
 }
 
 
+def reason(exc: BaseException) -> str:
+    """A one-line cause for a log: no tracebacks or Playwright call logs, but keep the page that was being loaded."""
+    msg = str(exc)
+    url = re.search(r'navigating to "([^"]+)"', msg)
+    first = " ".join(msg.split("Call log:")[0].split())
+    out = f"{type(exc).__name__}: {first}" if first else type(exc).__name__
+    return f"{out} ({url.group(1)})" if url else out
+
+
 class record:
     """Log one pipeline step to `runs`. Use `with record(conn, "sync_x") as r: ...; r.detail = "12 posts"`.
 
@@ -142,7 +152,7 @@ class record:
     def __exit__(self, exc_type, exc, tb):
         self._spinner.__exit__(None, None, None)
         if exc:
-            self.status, self.detail = "error", f"{type(exc).__name__}: {exc}"[:500]
+            self.status, self.detail = "error", reason(exc)[:500]
         used = {k: USAGE[k] - self.base[k] for k in USAGE}
         self.conn.execute(
             """INSERT INTO runs(started_at, finished_at, step, status, detail, trigger, command,

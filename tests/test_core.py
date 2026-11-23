@@ -536,3 +536,94 @@ def test_login_falls_back_to_window_when_not_interactive():
     from gtm import browser
 
     assert browser._reuse_browser_login("x") is False  # pytest stdin is not a tty: never touches any browser or the Keychain
+
+
+def test_popup_shows_when_each_draft_was_written_not_when_opened():
+    from gtm.notify import render_page
+    from gtm.status import when
+
+    created = "2026-11-20T01:00:54.000Z"
+    page = render_page([{"platform": "x", "text": "t", "why": "", "created_at": created}])
+    assert when(created) in page
+
+
+def test_a_manual_draft_counts_as_the_last_draft_so_ticks_dont_redo_it(conn, monkeypatch):
+    from gtm import draft, llm, notify
+    from gtm.db import kv_get
+
+    monkeypatch.setattr(draft, "digest", lambda c, since: "## project: p\nwork")
+    monkeypatch.setattr(draft, "propose_angles", lambda m: [])
+    monkeypatch.setattr(llm, "complete", lambda p, **k: '{"drafts":[{"platform":"x","text":"hello world","why":"w"}]}')
+    monkeypatch.setattr(notify, "send_batch", lambda d: "stdout")
+    draft.draft(conn, about="a topic")
+    assert kv_get(conn, "last_draft_ts") is None
+    (made,) = draft.draft(conn)
+    assert kv_get(conn, "last_draft_ts") == made["created_at"]
+
+
+def test_llm_failure_reports_the_real_reason_and_retries_once(monkeypatch):
+    import subprocess
+
+    from gtm import llm
+
+    calls = []
+    out = json.dumps({"is_error": True, "result": "You've hit your usage limit"})
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(1) or subprocess.CompletedProcess(a, 1, out, ""))
+    with pytest.raises(RuntimeError, match="usage limit"):
+        llm.complete("x")
+    assert len(calls) == 2
+
+
+def test_errors_log_a_clean_reason(conn):
+    from gtm import status
+    from gtm.db import record
+
+    class TimeoutError_(Exception):
+        pass
+
+    TimeoutError_.__name__ = "TimeoutError"
+    with record(conn, "sync_linkedin", swallow=True):
+        raise TimeoutError_('Page.goto: Timeout 30000ms exceeded.\nCall log:\n  - navigating to "https://www.linkedin.com/in/me/", waiting until "domcontentloaded"')
+    r = conn.execute("SELECT * FROM runs").fetchone()
+    assert (r["status"], r["detail"]) == ("error", "TimeoutError: Page.goto: Timeout 30000ms exceeded. (https://www.linkedin.com/in/me/)")
+    assert "why: TimeoutError: Page.goto: Timeout 30000ms exceeded. (https://www.linkedin.com/in/me/)" in status.render_text(status.collect(conn))
+
+
+def _prompts(conn, n, parts=1):
+    for i in range(n):
+        for j in range(parts):
+            conn.execute("INSERT INTO chunks(session_id, uuid, role, text, ts) VALUES('s',?,'user','a long enough prompt text here',?)",
+                         (f"m{i}:{j}", f"2999-01-01T00:00:0{i}.000Z"))
+    conn.commit()
+
+
+def test_tick_skip_reasons_count_prompts_not_chunks(conn, monkeypatch):
+    from gtm import draft
+
+    monkeypatch.setattr(draft.search, "embed_pending", lambda c: 0)
+    monkeypatch.setattr("gtm.ingest.ingest_all", lambda c: 0)
+    monkeypatch.setattr("gtm.browser.sync_site", lambda c, s, r, force=False: r.skip("off"))
+    assert draft.tick(conn, force=True) == "skip: no new Claude Code prompts since yesterday"
+    _prompts(conn, 1, parts=5)  # one long prompt split into 5 chunks is still one prompt
+    assert draft.tick(conn, force=True) == "skip: only 1 new prompt since yesterday (needs 3)"
+    assert {r["step"]: r["status"] for r in conn.execute("SELECT * FROM runs")}["draft"] == "skip"
+
+
+def test_tick_marks_learn_skipped_when_drafting_fails(conn, monkeypatch):
+    from gtm import draft
+    from gtm.db import kv_set
+
+    def boom(*a, **k):
+        raise RuntimeError("LLM command failed (1): usage limit")
+
+    monkeypatch.setattr(draft, "draft", boom)
+    monkeypatch.setattr(draft.search, "embed_pending", lambda c: 0)
+    monkeypatch.setattr("gtm.ingest.ingest_all", lambda c: 0)
+    monkeypatch.setattr("gtm.browser.sync_site", lambda c, s, r, force=False: r.skip("off"))
+    _prompts(conn, 3)
+    with pytest.raises(RuntimeError):
+        draft.tick(conn, force=True)
+    rows = {r["step"]: (r["status"], r["detail"]) for r in conn.execute("SELECT * FROM runs")}
+    assert rows["draft"][0] == "error" and "usage limit" in rows["draft"][1]
+    assert rows["learn"] == ("skip", "did not run because drafting failed")
