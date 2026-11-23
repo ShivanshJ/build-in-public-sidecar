@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 
-from . import enrich, llm, notify, search, ui
+from . import llm, notify, search, ui
 from .db import home, iso_now, kv_get, kv_set, record
 from .ingest import redact
 
@@ -169,19 +169,10 @@ def draft(conn, about: str | None = None, hours: int = 24, send: bool = True) ->
     ui.say(f"  wrote {len(drafts)} draft(s):")
     for d in drafts:
         ui.say(f"    {'X' if d['platform'] == 'x' else 'LinkedIn':<8} {ui.snippet(d['text'])}")
-    if drafts and enrich.enabled():
-        with record(conn, "enrich", swallow=True) as r:
-            with ui.working("searching the web for people to tag"):
-                found = enrich.suggest(drafts)
-            for d, people in zip(drafts, found):
-                d["suggestions"] = people
-                tags = ", ".join(f"@{p['handle']}" if p["handle"] else p["name"] for p in people[:4])
-                ui.say(f"    {ui.snippet(d['text'], 40, 0):<44} {tags or 'no verified people found'}")
-            r.detail = f"{sum(map(len, found))} people for {len(drafts)} draft(s)"
     for d in drafts:
         cur = conn.execute(
-            "INSERT INTO drafts(created_at, platform, text, why, suggestions) VALUES(?,?,?,?,?)",
-            (iso_now(), d["platform"], d["text"], d["why"], json.dumps(d["suggestions"]) if d.get("suggestions") else None),
+            "INSERT INTO drafts(created_at, platform, text, why) VALUES(?,?,?,?)",
+            (iso_now(), d["platform"], d["text"], d["why"]),
         )
         d["id"] = cur.lastrowid
     conn.commit()

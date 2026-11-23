@@ -138,7 +138,7 @@ A failing step doesn't stop the others: a broken LinkedIn pull still lets drafti
 <details>
 <summary>Token usage</summary>
 
-Drafting is two `claude -p` calls per run (find angles, write posts), plus a third with web search for tag suggestions unless `enrich` is `false`. Each call carries Claude Code's own fixed prompt overhead (about 22k input tokens even for a one-word prompt), so expect tens of thousands of tokens per run, mostly cached. Figures come from `claude -p --output-format json`; a custom `llm_cmd` counts as a call with unknown tokens.
+Drafting is two `claude -p` calls per run (find angles, write posts). Each call carries Claude Code's own fixed prompt overhead (about 22k input tokens even for a one-word prompt), so expect tens of thousands of tokens per run, mostly cached. Figures come from `claude -p --output-format json`; a custom `llm_cmd` counts as a call with unknown tokens.
 </details>
 
 <details>
@@ -151,8 +151,6 @@ Scheduled runs pull each account at most every `sync_hours` (default 20), so the
 
 Drafts open as a local HTML page (no server, no network). Each card is editable, shows a character count (X is flagged over 280), and has **Copy** and **Post** buttons. Post opens the X or LinkedIn composer with your text prefilled.
 
-Under each draft, a **Who to tag** dropdown lists people found by a live web search, each with a reason, what they posted and when, and a source link to check. It's a mix: people who posted about the same thing recently, smaller builders who may reshare you, and at most one bigger account. On X, **Add @handle** appends the handle to your text; on LinkedIn, copy the name and pick them from its `@` list (mentions can't be prefilled). Nothing is added to a draft unless you click.
-
 - Edits in the page aren't saved back. The database keeps the model's original text, so copy or post from the page.
 - Every draft is saved in `gtm.db` and each batch as `~/.agent_sessions_gtm/drafts/<timestamp>.html`. A draft's `status` of `sent` means it was shown, not posted.
 - Set `notify` to `stdout` to print drafts instead of opening the page.
@@ -163,7 +161,6 @@ Under each draft, a **Who to tag** dropdown lists people found by a live web sea
 
 - **Capture.** The hook reads the transcript path from Claude Code and ingests only new lines. It keeps user and assistant text, drops tool output and system reminders, redacts common secret patterns, and splits text into chunks of at most 1,200 characters. Standard library only, milliseconds per call, and it never fails your session.
 - **Search.** SQLite FTS5 (BM25) plus `BAAI/bge-small-en-v1.5` embeddings (cosine in numpy), fused with reciprocal rank fusion, then the top 30 reranked by a cross-encoder (`Xenova/ms-marco-MiniLM-L-6-v2`). All local, CPU only.
-- **Who to tag (one web-enabled model call).** After the drafts are written, `claude -p` runs with its WebSearch and WebFetch tools, so suggestions come from the live web rather than model memory. Entries without an https source link are dropped, and every suggestion is shown as plain text next to the draft. Only the drafted post text goes into the searches, not your transcripts. It takes a couple of minutes and some tokens; set `enrich` to `false` to skip it.
 - **Drafting (two model calls).** First the model reads a digest of recent work and proposes up to 4 post angles, each with a search query. Each query searches only sessions *older* than the digest window. Then the writer gets the recent digest, the retrieved history with dates, your style guide, your best and latest posts as examples, and your last drafts (so angles don't repeat). It's told not to invent numbers or streaks and to skip anything confidential; drafts are redacted again and X posts over 280 characters are dropped. Retrieval only searches saved session text, never your repos or files.
 - **Learning your voice.** No fine-tuning. Posts are scored `likes + 2*reposts + 3*replies`; the best become few-shot examples and `style.md` is regenerated daily from them.
 - **No loops.** Drafting runs with `GTM_DRAFTING=1`, which makes the hook exit, so the drafter never ingests itself.
@@ -175,7 +172,6 @@ Settings live in `~/.agent_sessions_gtm/config.json` (mode 600). Any key can be 
 | Key | Default | Purpose |
 |---|---|---|
 | `notify` | `popup` | `popup` or `stdout` |
-| `enrich` | `true` | Search the web for people to tag after drafting. `false` skips it (needs the default `llm_cmd`) |
 | `hours` | `9,13,18` | Hours (local time, at :30) the scheduler runs. Re-run `gtm schedule` after changing |
 | `min_gap_hours` | `3` | Minimum hours between ticks |
 | `sync_hours` | `20` | Minimum hours between scheduled pulls of each account |

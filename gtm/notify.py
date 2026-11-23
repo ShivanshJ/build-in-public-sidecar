@@ -1,6 +1,5 @@
 """Show drafts in a local popup: a static HTML page (no server, no network) opened in your browser."""
 import html
-import json
 import os
 import shutil
 import subprocess
@@ -28,16 +27,6 @@ PAGE = """<!doctype html>
   .spacer { flex: 1; } .count { color: #777; font-size: 13px; } .count.over { color: #c0392b; font-weight: 600; }
   button, a.post { font: inherit; font-size: 14px; padding: 7px 14px; border-radius: 8px; border: 1px solid #cfcfca; background: #fff; color: inherit; cursor: pointer; text-decoration: none; }
   a.post { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
-  details.tags { margin-top: 12px; border-top: 1px solid #eee; padding-top: 10px; }
-  details.tags summary { cursor: pointer; font-size: 13px; color: #555; user-select: none; }
-  .person { padding: 10px 0; border-bottom: 1px solid #f0f0ec; font-size: 13px; }
-  .person:last-child { border-bottom: 0; }
-  .person .top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .kind { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: 1px 7px; border-radius: 99px; }
-  .kind.peer { background: #e4f1e6; color: #1e6b32; } .kind.rising { background: #e6eefb; color: #1d4f9c; } .kind.big { background: #f3e9d9; color: #8a5a10; }
-  .person .name { font-weight: 600; } .person .detail { color: #666; margin-top: 3px; }
-  .person .detail a { color: #1d4f9c; } .person button { font-size: 12px; padding: 3px 9px; }
-  .where { color: #999; font-size: 12px; }
 </style></head>
 <body><main>
 <h1>__COUNT__ drafts ready</h1>
@@ -58,12 +47,6 @@ document.querySelectorAll(".card").forEach(c => {
     ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px";
   };
   ta.addEventListener("input", update); update();
-  c.querySelectorAll(".person button").forEach(b => b.addEventListener("click", async () => {
-    const v = b.dataset.value, old = b.textContent;
-    if (b.dataset.act === "add") { ta.value = ta.value.trimEnd() + " " + v; update(); b.textContent = "Added"; }
-    else { try { await navigator.clipboard.writeText(v); } catch (_) {} b.textContent = "Copied"; }
-    setTimeout(() => b.textContent = old, 1500);
-  }));
   c.querySelector(".copy").addEventListener("click", async e => {
     try { await navigator.clipboard.writeText(ta.value); } catch (_) { ta.select(); document.execCommand("copy"); }
     e.target.textContent = "Copied"; setTimeout(() => e.target.textContent = "Copy", 1500);
@@ -75,7 +58,6 @@ document.querySelectorAll(".card").forEach(c => {
 CARD = """<section class="card" data-platform="{platform}">
   <div class="meta"><span class="badge">{label}</span><span class="why">{why}</span></div>
   <textarea rows="5" spellcheck="true">{text}</textarea>
-  {tags}
   <div class="row"><span class="count"></span><span class="spacer"></span>
     <button class="copy" type="button">Copy</button>
     <a class="post" target="_blank" rel="noopener">Post to {label}</a></div>
@@ -89,37 +71,6 @@ def intent_url(platform: str, text: str) -> str:
     return f"https://www.linkedin.com/feed/?shareActive=true&text={q}"
 
 
-KIND_LABEL = {"peer": "similar post", "rising": "rising builder", "big": "bigger account"}
-
-
-def render_tags(platform: str, people) -> str:
-    """Collapsed list of who to tag, with the reason and a source link. All text is escaped; links are https only."""
-    if isinstance(people, str):
-        try:
-            people = json.loads(people)
-        except ValueError:
-            people = []
-    if not people:
-        return ""
-    rows = []
-    for p in people:
-        e = lambda k: html.escape(str(p.get(k, "")), quote=True)
-        if platform == "x" and p.get("handle"):
-            btn = f'<button type="button" data-act="add" data-value="@{e("handle")}">Add @{e("handle")}</button>'
-        else:
-            btn = f'<button type="button" data-act="copy" data-value="{e("name")}">Copy name</button>'
-        who = f'<span class="name">{e("name")}</span>' + (f' <span class="where">@{e("handle")}</span>' if p.get("handle") else "")
-        where = "tag in the post" if p.get("where") == "post" else "better as a comment"
-        rows.append(
-            f'<div class="person"><div class="top"><span class="kind {e("kind")}">{html.escape(KIND_LABEL.get(p.get("kind"), "similar post"))}</span>'
-            f'{who}<span class="spacer"></span><span class="where">{where}</span>{btn}</div>'
-            f'<div class="detail">{e("why")}</div>'
-            f'<div class="detail">{e("evidence")} <a href="{e("url")}" target="_blank" rel="noopener noreferrer">source</a></div></div>'
-        )
-    note = "" if platform == "x" else '<div class="detail where">LinkedIn mentions have to be typed with @ in its composer; copy the name and pick them from its list.</div>'
-    return f'<details class="tags"><summary>Who to tag ({len(people)})</summary>{"".join(rows)}{note}</details>'
-
-
 def render_page(drafts: list[dict]) -> str:
     """Draft text is model output built from untrusted material, so everything is HTML-escaped."""
     cards = "".join(
@@ -128,7 +79,6 @@ def render_page(drafts: list[dict]) -> str:
             label="X" if d["platform"] == "x" else "LinkedIn",
             why=html.escape(d.get("why", "")),
             text=html.escape(d["text"]),
-            tags=render_tags(d["platform"], d.get("suggestions")),
         )
         for d in drafts
     )
@@ -172,10 +122,7 @@ def send_batch(drafts: list[dict]) -> str:
     backend = cfg("notify", "popup")
     if backend == "stdout":
         for d in drafts:
-            print(f"--- [{d['platform']}] ---\n{d['text']}\n{intent_url(d['platform'], d['text'])}")
-            for p in d.get("suggestions") or []:
-                print(f"  tag? {p['name']} {'@' + p['handle'] if p['handle'] else ''} ({p['kind']}): {p['why']} {p['url']}")
-            print()
+            print(f"--- [{d['platform']}] ---\n{d['text']}\n{intent_url(d['platform'], d['text'])}\n")
     else:
         popup(drafts)
     return backend
