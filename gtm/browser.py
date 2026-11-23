@@ -1,7 +1,7 @@
 """Pull your own posts from X and LinkedIn through a logged-in Chrome profile kept on this machine.
 
-`gtm login <site>` opens a visible window once so you sign in yourself (no passwords or tokens are stored by gtm;
-the session cookies live in ~/.agent_sessions_gtm/browser). `gtm sync` then reads your own profile headlessly.
+`code_gtm login <site>` opens a visible window once so you sign in yourself (no passwords or tokens are stored by gtm;
+the session cookies live in ~/.agent_sessions_gtm/browser). `code_gtm sync` then reads your own profile headlessly.
 """
 import re
 import time
@@ -103,14 +103,15 @@ def login(conn, site: str) -> None:
         ctx = _context(p, headless=False)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(LOGIN_URL[site])
-        input(f"Sign in to {site} in the opened window, then press Enter here... ")
+        print("A separate Chrome window opened (gtm's own profile, not your everyday one, so you start signed out).")
+        input(f"Sign in to {site} there (\"Continue with Google\" works), then press Enter here... ")
         ctx.close()
     kv_set(conn, f"login_{site}", iso_now())
 
 
 def _check_login(page, site: str) -> None:
     if re.search(r"/(login|i/flow|authwall|checkpoint|uas)\b", page.url):
-        raise SessionExpired(f"{site} session expired; run `gtm login {site}`")
+        raise SessionExpired(f"{site} session expired; run `code_gtm login {site}`")
 
 
 def _scrape(page, js: str, rounds: int) -> list[dict]:
@@ -177,15 +178,15 @@ def sync_site(conn, site: str, r, force: bool = False) -> None:
     """Fill the recorder `r` (see db.record). Prefers the X API when a bearer token is configured.
 
     Scheduled ticks sync each site at most every `sync_hours` (default 20): re-reading your profile three times
-    a day adds nothing, costs API reads, and is more scraping than needed. `gtm sync` passes force=True.
+    a day adds nothing, costs API reads, and is more scraping than needed. `code_gtm sync` passes force=True.
     """
     api = site == "x" and cfg("x_bearer_token") and cfg("x_username")
     if not api and not kv_get(conn, f"login_{site}"):
-        r.skip(f"not connected; run `gtm login {site}`")
+        r.skip(f"not connected; run `code_gtm login {site}`")
         return
     age = hours_since(kv_get(conn, f"last_sync_{site}"))
     if not force and age is not None and age < float(cfg("sync_hours", 20)):
-        r.skip(f"synced {age:.0f}h ago (every {float(cfg('sync_hours', 20)):g}h; `gtm sync` forces)")
+        r.skip(f"synced {age:.0f}h ago (every {float(cfg('sync_hours', 20)):g}h; `code_gtm sync` forces)")
         return
     if api:
         ui.update("asking the X API for your latest posts")

@@ -148,7 +148,7 @@ class record:
             """INSERT INTO runs(started_at, finished_at, step, status, detail, trigger, command,
                                 llm_calls, tokens_in, tokens_out, cost_usd) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (self.started, iso_now(), self.step, self.status, str(self.detail),
-             os.environ.get("GTM_TRIGGER", "manual"), "gtm " + " ".join(sys.argv[1:]),
+             os.environ.get("GTM_TRIGGER", "manual"), "code_gtm " + " ".join(sys.argv[1:]),
              used["calls"], used["tokens_in"], used["tokens_out"], used["cost_usd"]),
         )
         self.conn.commit()

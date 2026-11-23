@@ -25,14 +25,15 @@ Claude Code sessions ──► local database ──► drafts popup in your bro
 
 ```sh
 git clone https://github.com/ShivanshJ/coder-gtm-machine && cd coder-gtm-machine
-uv venv && uv pip install -e ".[browser]"
-source .venv/bin/activate        # the commands below assume gtm is on your PATH
+uv tool install ".[browser]"
 ```
+
+This puts a `code_gtm` command on your PATH (run `uv tool update-shell` if your shell can't find it). The tool lives in its own environment, so there's nothing to activate, and the capture hook keeps working after you delete the clone. To update later: `git pull && uv tool install --reinstall ".[browser]"`, then `code_gtm setup` once more.
 
 ### 2. See it work first (optional, installs nothing)
 
 ```sh
-gtm demo
+code_gtm demo
 ```
 
 Runs the real thing once on your own Claude Code sessions and opens two pages: the drafts popup and a status dashboard. It lists your projects so you can **pick one** (or press Enter for all), then **asks before doing anything**, because a digest of your recent work goes to `claude -p` to write the drafts. Pick a project that isn't an employer repo. Everything lives in a throwaway folder it prints at the end, so it's safe to delete. The first run downloads the search models and can take a minute on a large history.
@@ -40,7 +41,7 @@ Runs the real thing once on your own Claude Code sessions and opens two pages: t
 ### 3. Turn it on
 
 ```sh
-gtm setup
+code_gtm setup
 ```
 
 This adds a `Stop` and `SessionEnd` hook to `~/.claude/settings.json` (a backup is saved next to it) and backfills your existing sessions. From now on every session is saved automatically.
@@ -48,31 +49,31 @@ This adds a `Stop` and `SessionEnd` hook to `~/.claude/settings.json` (a backup 
 ### 4. Teach it your voice
 
 ```sh
-gtm login x            # a Chrome window opens: sign in yourself, then press Enter
-gtm login linkedin     # same
-gtm sync               # pull your past posts and their likes/replies (lists each one as it's saved)
+code_gtm login x            # a separate Chrome window opens: sign in yourself, then press Enter
+code_gtm login linkedin     # same
+code_gtm sync               # pull your past posts and their likes/replies (lists each one as it's saved)
 ```
 
-gtm never sees your password; the session stays in a dedicated browser profile on your machine. No Chrome, or don't want browser access? Import instead: `gtm import-x tweets.js` (your X archive) or `gtm import-posts posts.txt --platform linkedin`. With no past posts, drafts use a plain default style.
+gtm never sees your password; the session stays in a dedicated browser profile on your machine. That window is a separate Chrome profile, not your everyday one, so you won't be signed in yet: pick "Continue with Google" or enter your details once. (Chrome doesn't let other programs drive your main profile, and keeping gtm's login separate means it never touches your other tabs and cookies.) No Chrome, or don't want browser access? Import instead: `code_gtm import-x tweets.js` (your X archive) or `code_gtm import-posts posts.txt --platform linkedin`. With no past posts, drafts use a plain default style.
 
 ### 5. Draft one, then schedule it
 
 ```sh
-gtm draft              # writes drafts from your last day and opens the popup
-gtm schedule           # macOS: runs at 09:30, 13:30 and 18:30 every day
+code_gtm draft              # writes drafts from your last day and opens the popup
+code_gtm schedule           # macOS: runs at 09:30, 13:30 and 18:30 every day
 ```
 
-`gtm draft` makes two model calls, so it uses real tokens. The scheduled run only drafts when you've done something new (3+ prompts since the last draft), so quiet days cost nothing. On Linux, add a cron line instead:
+`code_gtm draft` makes two model calls, so it uses real tokens. The scheduled run only drafts when you've done something new (3+ prompts since the last draft), so quiet days cost nothing. On Linux, add a cron line instead:
 
 ```
-30 9,13,18 * * *  GTM_TRIGGER=schedule /path/to/coder-gtm-machine/.venv/bin/gtm tick
+30 9,13,18 * * *  GTM_TRIGGER=schedule /path/to/coder-gtm-machine/.venv/bin/code_gtm tick
 ```
 
 ### 6. Check it's working
 
 ```sh
-gtm status             # hook, scheduler, accounts, last result of every step
-gtm status --web       # the same as a dashboard in your browser, with full history
+code_gtm status             # hook, scheduler, accounts, last result of every step
+code_gtm status --web       # the same as a dashboard in your browser, with full history
 ```
 
 After that you don't need to do anything: when there's something worth posting, the drafts page opens.
@@ -83,43 +84,43 @@ After that you don't need to do anything: when there's something worth posting, 
 
 | Command | What it does |
 |---|---|
-| `gtm draft [--about "<query>"] [--hours N] [--no-send]` | Draft now. `--about` grounds drafts in a search instead of the last day; `--no-send` prints instead of opening the popup |
-| `gtm tick [--force]` | What the scheduler runs: ingest, index, sync accounts, draft if there's new work. Prints a line per step |
-| `gtm schedule [--remove]` | Install or remove the macOS launchd job |
+| `code_gtm draft [--about "<query>"] [--hours N] [--no-send]` | Draft now. `--about` grounds drafts in a search instead of the last day; `--no-send` prints instead of opening the popup |
+| `code_gtm tick [--force]` | What the scheduler runs: ingest, index, sync accounts, draft if there's new work. Prints a line per step |
+| `code_gtm schedule [--remove]` | Install or remove the macOS launchd job |
 
 **Look at things.** `status`, `log` and `drafts` all take `--web` to open the result in your browser instead of the terminal.
 
 | Command | What it shows |
 |---|---|
-| `gtm status` | Is it working: hook, scheduler and the command it runs, accounts, last result of each step, model usage |
-| `gtm log [--errors]` | Every step ever run: when, scheduled or manual, outcome, tokens and cost |
-| `gtm drafts [-n N]` | Your last N drafts, newest first (they're saved in the database) |
-| `gtm inbox` | Reopen the latest drafts popup |
+| `code_gtm status` | Is it working: hook, scheduler and the command it runs, accounts, last result of each step, model usage |
+| `code_gtm log [--errors]` | Every step ever run: when, scheduled or manual, outcome, tokens and cost |
+| `code_gtm drafts [-n N]` | Your last N drafts, newest first (they're saved in the database) |
+| `code_gtm inbox` | Reopen the latest drafts popup |
 
 **Your posts**
 
 | Command | What it does |
 |---|---|
-| `gtm login x\|linkedin` | Connect an account (sign in once in a browser window) |
-| `gtm sync [x\|linkedin]` | Pull your latest posts and engagement now |
-| `gtm learn` | Rewrite your style guide from your best posts (also runs daily on its own) |
-| `gtm import-x <tweets.js>` / `gtm import-posts <file> --platform linkedin` | Import posts from an X archive or a text file (posts separated by `---`) |
+| `code_gtm login x\|linkedin` | Connect an account (sign in once in a browser window) |
+| `code_gtm sync [x\|linkedin]` | Pull your latest posts and engagement now |
+| `code_gtm learn` | Rewrite your style guide from your best posts (also runs daily on its own) |
+| `code_gtm import-x <tweets.js>` / `code_gtm import-posts <file> --platform linkedin` | Import posts from an X archive or a text file (posts separated by `---`) |
 
 **Search your own history**
 
 | Command | What it does |
 |---|---|
-| `gtm search "<query>" [--fast]` | Search every session you've had. `--fast` skips the reranker |
-| `gtm ls` / `gtm show <id>` | List sessions / print one (an id prefix is enough) |
+| `code_gtm search "<query>" [--fast]` | Search every session you've had. `--fast` skips the reranker |
+| `code_gtm ls` / `code_gtm show <id>` | List sessions / print one (an id prefix is enough) |
 
-**Housekeeping:** `gtm setup`, `gtm demo`, `gtm ingest` (re-scan transcripts), `gtm index` (embed anything new).
+**Housekeeping:** `code_gtm setup`, `code_gtm demo`, `code_gtm ingest` (re-scan transcripts), `code_gtm index` (embed anything new).
 
 ## Is it working?
 
-Every step (ingest, each account sync, embed, draft, learn) records its outcome: when it ran, whether the scheduler or you started it, the command, the result, and the tokens and cost it used. Long steps show a live spinner with elapsed seconds and say what they're doing: which angles Claude found, each post `gtm sync` pulled (first sentence only, marked new or updated), and each draft written. Scheduled runs write the same lines, minus the spinner, to `~/.agent_sessions_gtm/tick.log`.
+Every step (ingest, each account sync, embed, draft, learn) records its outcome: when it ran, whether the scheduler or you started it, the command, the result, and the tokens and cost it used. Long steps show a live spinner with elapsed seconds and say what they're doing: which angles Claude found, each post `code_gtm sync` pulled (first sentence only, marked new or updated), and each draft written. Scheduled runs write the same lines, minus the spinner, to `~/.agent_sessions_gtm/tick.log`.
 
 ```
-$ gtm status
+$ code_gtm status
 capture hook : installed
 scheduler    : loaded, runs `python -m gtm.cli tick` at 09:30, 13:30, 18:30
 transcripts  : 18 sessions, 785 chunks, 785 embedded, newest 2h ago
@@ -129,11 +130,11 @@ drafts       : 12 total, last tick 2h ago, last draft 2h ago
 model usage  : 24 calls, 1,480,000 tokens, $5.10 (all time, per `claude -p` reports)
 
 last run of each step:
-  sync_x       error  2h ago    SessionExpired: x session expired; run `gtm login x`  [last ok: 1d ago]
+  sync_x       error  2h ago    SessionExpired: x session expired; run `code_gtm login x`  [last ok: 1d ago]
   draft        ok     2h ago    3 drafts from the last 24h  61,400 tok $0.21
 ```
 
-A failing step doesn't stop the others: a broken LinkedIn pull still lets drafting run. Use `gtm log --errors` to see only failures.
+A failing step doesn't stop the others: a broken LinkedIn pull still lets drafting run. Use `code_gtm log --errors` to see only failures.
 
 <details>
 <summary>Token usage</summary>
@@ -144,7 +145,7 @@ Drafting is two `claude -p` calls per run (find angles, write posts). Each call 
 <details>
 <summary>Re-runs don't duplicate or re-download</summary>
 
-Scheduled runs pull each account at most every `sync_hours` (default 20), so the three daily runs read your profile about once a day; `gtm sync` always pulls. A post is stored once, matched by its platform id (or by identical text for posts imported from a file), so syncing again only refreshes its likes and replies. Each pull re-reads your most recent ~20 posts, so older posts keep the numbers from when they were last seen. Transcript ingest is incremental.
+Scheduled runs pull each account at most every `sync_hours` (default 20), so the three daily runs read your profile about once a day; `code_gtm sync` always pulls. A post is stored once, matched by its platform id (or by identical text for posts imported from a file), so syncing again only refreshes its likes and replies. Each pull re-reads your most recent ~20 posts, so older posts keep the numbers from when they were last seen. Transcript ingest is incremental.
 </details>
 
 ## The drafts popup
@@ -172,7 +173,7 @@ Settings live in `~/.agent_sessions_gtm/config.json` (mode 600). Any key can be 
 | Key | Default | Purpose |
 |---|---|---|
 | `notify` | `popup` | `popup` or `stdout` |
-| `hours` | `9,13,18` | Hours (local time, at :30) the scheduler runs. Re-run `gtm schedule` after changing |
+| `hours` | `9,13,18` | Hours (local time, at :30) the scheduler runs. Re-run `code_gtm schedule` after changing |
 | `min_gap_hours` | `3` | Minimum hours between ticks |
 | `sync_hours` | `20` | Minimum hours between scheduled pulls of each account |
 | `llm_cmd` | `claude -p --no-session-persistence` | Any command that reads a prompt on stdin and prints the answer |
@@ -188,7 +189,7 @@ Settings live in `~/.agent_sessions_gtm/config.json` (mode 600). Any key can be 
 
 ## Limitations
 
-- **Account pulls are unverified.** The X and LinkedIn extraction logic is unit-tested and headless Chrome launches against a local test page, but the page selectors haven't been checked against the real sites, and those sites change without notice. This is also scraping, which both sites' terms restrict; reading only your own profile a few times a day is low volume but carries some account risk. If a pull fails, `gtm status` shows the error and a screenshot is saved to `~/.agent_sessions_gtm/debug/`. The file imports are the fallback.
+- **Account pulls are unverified.** The X and LinkedIn extraction logic is unit-tested and headless Chrome launches against a local test page, but the page selectors haven't been checked against the real sites, and those sites change without notice. This is also scraping, which both sites' terms restrict; reading only your own profile a few times a day is low volume but carries some account risk. If a pull fails, `code_gtm status` shows the error and a screenshot is saved to `~/.agent_sessions_gtm/debug/`. The file imports are the fallback.
 - LinkedIn has no API for reading your own posts, so the browser is the only automatic route there.
 - The popup layout is checked, but its Copy and Post buttons haven't been clicked through in a browser. LinkedIn's prefill link may not behave consistently.
 - The launchd job and X API sync haven't been tested against live services. The scheduler only fires while the laptop is awake.
@@ -197,7 +198,7 @@ Settings live in `~/.agent_sessions_gtm/config.json` (mode 600). Any key can be 
 ## Uninstall
 
 ```sh
-gtm schedule --remove
+code_gtm schedule --remove
 ```
 
 Then remove the `gtm.hook` entries under `Stop` and `SessionEnd` in `~/.claude/settings.json` (or restore `settings.json.bak-gtm`), and delete `~/.agent_sessions_gtm` to remove all data.

@@ -86,7 +86,7 @@ def cmd_login(a, conn):
     from .browser import login
 
     login(conn, a.site)
-    print(f"{a.site} connected. Run `gtm sync {a.site}` to pull your posts.")
+    print(f"{a.site} connected. Run `code_gtm sync {a.site}` to pull your posts.")
 
 
 def cmd_learn(a, conn):
@@ -120,7 +120,7 @@ def cmd_inbox(a, conn):
     from . import notify
 
     if not notify.open_latest():
-        print("no drafts yet; run `gtm draft` or wait for the next tick")
+        print("no drafts yet; run `code_gtm draft` or wait for the next tick")
 
 
 def cmd_drafts(a, conn):
@@ -131,7 +131,7 @@ def cmd_drafts(a, conn):
 
     rows = conn.execute("SELECT * FROM drafts ORDER BY id DESC LIMIT ?", (a.limit,)).fetchall()
     if not rows:
-        print("No drafts yet. Run `gtm draft`, or wait for the next scheduled run.")
+        print("No drafts yet. Run `code_gtm draft`, or wait for the next scheduled run.")
         return
     if a.web:
         notify.popup([dict(r) for r in reversed(rows)])
@@ -154,7 +154,7 @@ def cmd_drafts(a, conn):
             if r["why"]:
                 print(dim(textwrap.fill("why: " + r["why"], width, initial_indent="    ", subsequent_indent="         ")))
         print()
-    print(dim("Open these to edit and post: gtm drafts --web   ·   Show more: gtm drafts -n 20"))
+    print(dim("Open these to edit and post: code_gtm drafts --web   ·   Show more: code_gtm drafts -n 20"))
 
 
 def cmd_status(a, conn):
@@ -196,7 +196,7 @@ def cmd_demo(a, conn):
     root = Path.home() / ".claude" / "projects"
     all_files = list(root.glob("*/*.jsonl"))
     if not all_files:
-        sys.exit("No Claude Code sessions found in ~/.claude/projects. Use Claude Code for a bit, then run `gtm demo`.")
+        sys.exit("No Claude Code sessions found in ~/.claude/projects. Use Claude Code for a bit, then run `code_gtm demo`.")
     strip = str(Path.home()).replace("/", "-") + "-"
     short = lambda f: f.parent.name.removeprefix(strip)
     counts = Counter(short(f) for f in all_files)
@@ -250,10 +250,11 @@ def cmd_demo(a, conn):
         r.detail = f"{len(drafts)} drafts from the last {hours}h"
     path = status.open_dashboard(conn, banner="Demo run on your real ~/.claude sessions, stored in a throwaway folder.")
     print(f"\nOpened the drafts popup and the status dashboard. Demo data lives in {home()}\n"
-          f"(delete it any time: rm -rf {home()}). To run this for real: gtm setup, gtm login x, gtm schedule.")
+          f"(delete it any time: rm -rf {home()}). To run this for real: code_gtm setup, code_gtm login x, code_gtm schedule.")
 
 
 def install_hook(settings: Path | None = None) -> bool:
+    """Add (or repoint) our Stop/SessionEnd hooks. Returns True if settings.json changed."""
     settings = settings or Path.home() / ".claude" / "settings.json"
     data = json.loads(settings.read_text()) if settings.exists() else {}
     command = f"{sys.executable} -m gtm.hook"
@@ -261,10 +262,13 @@ def install_hook(settings: Path | None = None) -> bool:
     changed = False
     for ev in HOOK_EVENTS:
         entries = hooks.setdefault(ev, [])
-        if any("gtm.hook" in h.get("command", "") for e in entries for h in e.get("hooks", [])):
-            continue
-        entries.append({"hooks": [{"type": "command", "command": command, "timeout": 15}]})
-        changed = True
+        ours = [h for e in entries for h in e.get("hooks", []) if "gtm.hook" in h.get("command", "")]
+        if not ours:
+            entries.append({"hooks": [{"type": "command", "command": command, "timeout": 15}]})
+            changed = True
+        for h in ours:
+            if h["command"] != command:
+                h["command"], changed = command, True
     if changed:
         if settings.exists():
             shutil.copy(settings, settings.with_name(settings.name + ".bak-gtm"))
@@ -277,7 +281,7 @@ def cmd_setup(a, conn):
 
     print(f"hook {'installed' if install_hook() else 'already installed'} in ~/.claude/settings.json")
     print(f"backfilled {ingest_all(conn)} chunks from existing transcripts")
-    print("\nNext: gtm demo   |   gtm login x   |   gtm login linkedin   |   gtm schedule   |   gtm status")
+    print("\nNext: code_gtm demo   |   code_gtm login x   |   code_gtm login linkedin   |   code_gtm schedule   |   code_gtm status")
 
 
 def cmd_schedule(a, conn):
@@ -304,7 +308,7 @@ def cmd_schedule(a, conn):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="gtm", description="Capture Claude Code transcripts, search them, draft posts.")
+    p = argparse.ArgumentParser(prog="code_gtm", description="Capture Claude Code transcripts, search them, draft posts.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def add(name, fn, help_):

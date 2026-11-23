@@ -83,8 +83,8 @@ def _tokens(r) -> str:
 def render_text(d: dict) -> str:
     sched = d["schedule"]
     out = [f"home: {d['home']}  notify: {d['notify']}",
-           f"capture hook : {'installed' if d['hook'] else 'NOT installed (run `gtm setup`)'}",
-           f"scheduler    : {('loaded, runs `' + sched['command'] + '` at ' + sched['times']) if sched['loaded'] else 'NOT loaded (run `gtm schedule`)'}",
+           f"capture hook : {'installed' if d['hook'] else 'NOT installed (run `code_gtm setup`)'}",
+           f"scheduler    : {('loaded, runs `' + sched['command'] + '` at ' + sched['times']) if sched['loaded'] else 'NOT loaded (run `code_gtm schedule`)'}",
            "transcripts  : {} sessions, {} chunks, {} embedded, newest {}".format(*d["transcripts"])]
     for site, n, how, _, synced in d["accounts"]:
         out.append(f"{site:<13}: {n} past posts ({how}; last pull {synced})")
@@ -92,7 +92,7 @@ def render_text(d: dict) -> str:
     t = d["totals"]
     out.append(f"model usage  : {t['calls']} calls, {t['tin'] + t['tout']:,} tokens, ${t['cost']:.2f} (all time, per `claude -p` reports)")
     if d["latest"]:
-        out.append("\nlast run of each step (`gtm log` for history, `gtm status --web` for the dashboard):")
+        out.append("\nlast run of each step (`code_gtm log` for history, `code_gtm status --web` for the dashboard):")
     for r in d["latest"]:
         extra = f"  [last ok: {ago(d['last_ok'].get(r['step']))}]" if r["status"] == "error" else ""
         out.append(f"  {r['step']:<13} {r['status']:<6} {ago(r['finished_at']):<9} {' '.join((r['detail'] or '').split())[:90]}  {_tokens(r)}{extra}")
@@ -101,7 +101,7 @@ def render_text(d: dict) -> str:
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
-<title>gtm status</title><style>
+<title>code_gtm status</title><style>
 body{font:14px/1.5 -apple-system,system-ui,sans-serif;background:#f6f6f4;color:#1a1a1a;margin:0;padding:32px 16px}
 main{max-width:1000px;margin:0 auto} h1{font-size:20px;margin:0 0 16px} h2{font-size:14px;margin:24px 0 8px;color:#555}
 .card{background:#fff;border:1px solid #e3e3df;border-radius:12px;padding:6px 16px;margin-bottom:8px}
@@ -111,7 +111,7 @@ th,td{text-align:left;padding:7px 10px;border-bottom:1px solid #f0f0ec;vertical-
 .b{font-size:11px;font-weight:600;padding:1px 8px;border-radius:99px;color:#fff}.ok{background:#2e8b57}.skip{background:#999}.error{background:#c0392b}
 .warn{color:#c0392b;font-weight:600}.banner{background:#fff3cd;border:1px solid #e8d48a;border-radius:8px;padding:8px 12px;margin-bottom:16px}
 code{background:#f0f0ec;padding:1px 5px;border-radius:4px}.num{white-space:nowrap}
-</style></head><body><main>__BANNER__<h1>gtm status <span style="color:#777;font-weight:400">· __NOW__</span></h1>__BODY__</main></body></html>"""
+</style></head><body><main>__BANNER__<h1>code_gtm status <span style="color:#777;font-weight:400">· __NOW__</span></h1>__BODY__</main></body></html>"""
 
 
 def render_html(d: dict, banner: str = "") -> str:
@@ -120,9 +120,9 @@ def render_html(d: dict, banner: str = "") -> str:
     kv = lambda k, v: f'<div class="kv"><div class="k">{e(k)}</div><div>{v}</div></div>'
     flag = lambda ok, good, bad: e(good) if ok else f'<span class="warn">{e(bad)}</span>'
     rows = [
-        kv("capture hook", flag(d["hook"], "installed", "NOT installed: run gtm setup")),
+        kv("capture hook", flag(d["hook"], "installed", "NOT installed: run code_gtm setup")),
         kv("scheduler", (f"loaded: runs <code>{e(sched['command'])}</code> at {e(sched['times'])}" if sched["loaded"]
-                         else '<span class="warn">NOT loaded: run gtm schedule</span>')),
+                         else '<span class="warn">NOT loaded: run code_gtm schedule</span>')),
         kv("transcripts", e("{} sessions, {} chunks, {} embedded, newest {}".format(*d["transcripts"]))),
     ]
     for site, n, how, ok, synced in d["accounts"]:

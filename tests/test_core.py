@@ -97,6 +97,17 @@ def test_install_hook_idempotent(tmp_path):
     assert (tmp_path / "settings.json.bak-gtm").exists()
 
 
+def test_install_hook_repoints_a_stale_command(tmp_path):
+    s = tmp_path / "settings.json"
+    old = "/old/venv/bin/python3 -m gtm.hook"
+    s.write_text(json.dumps({"hooks": {ev: [{"hooks": [{"type": "command", "command": old}]}] for ev in cli.HOOK_EVENTS}}))
+    assert cli.install_hook(s) is True
+    data = json.loads(s.read_text())
+    assert all(len(data["hooks"][ev]) == 1 and data["hooks"][ev][0]["hooks"][0]["command"].endswith("-m gtm.hook")
+               and old not in data["hooks"][ev][0]["hooks"][0]["command"] for ev in cli.HOOK_EVENTS)
+    assert cli.install_hook(s) is False
+
+
 def test_bm25_until_excludes_recent(conn, tmp_path):
     f = tmp_path / "s2.jsonl"
     old = rec("1", "user", "fixed the github pages jekyll deploy error").replace("2026-11-20", "2026-10-01")
@@ -256,7 +267,7 @@ def test_llm_usage_is_recorded_on_the_step(conn, monkeypatch):
         assert llm.complete("x") == "hi"
     r = conn.execute("SELECT * FROM runs").fetchone()
     assert (r["llm_calls"], r["tokens_in"], r["tokens_out"], r["cost_usd"]) == (1, 152, 7, 0.05)
-    assert r["trigger"] == "manual" and r["command"].startswith("gtm")
+    assert r["trigger"] == "manual" and r["command"].startswith("code_gtm")
 
 
 def test_dashboard_escapes_and_demo_runs_in_a_sandbox(tmp_path, monkeypatch, capsys):

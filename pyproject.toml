@@ -9,7 +9,7 @@ browser = ["playwright"]
 dev = ["pytest", "playwright"]
 
 [project.scripts]
-gtm = "gtm.cli:main"
+code_gtm = "gtm.cli:main"
 
 [build-system]
 requires = ["hatchling"]
