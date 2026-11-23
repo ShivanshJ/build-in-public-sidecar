@@ -24,7 +24,7 @@ Claude Code sessions ──► local database ──► drafts popup in your bro
 ### 1. Install
 
 ```sh
-git clone <this repo> && cd coder-gtm-machine
+git clone https://github.com/ShivanshJ/coder-gtm-machine && cd coder-gtm-machine
 uv venv && uv pip install -e ".[browser]"
 source .venv/bin/activate        # the commands below assume gtm is on your PATH
 ```
