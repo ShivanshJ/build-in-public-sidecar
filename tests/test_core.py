@@ -305,6 +305,33 @@ def test_demo_runs_real_pipeline_on_claude_sessions_in_a_sandbox(tmp_path, monke
     assert real.execute("SELECT count(*) FROM chunks").fetchone()[0] == 0
 
 
+def test_demo_can_be_limited_to_one_project(tmp_path, monkeypatch):
+    import os
+
+    from gtm import llm
+    from gtm.db import connect
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("GTM_HOME", str(tmp_path / "real"))
+    monkeypatch.setenv("GTM_NO_OPEN", "1")
+    connect()
+    base = tmp_path / "home" / ".claude" / "projects"
+    for name, text in (("alpha-app", "build the alpha uploader with retries"), ("beta-site", "fix the beta navbar overflow on mobile")):
+        d = base / ("-" + str(tmp_path / "home").strip("/").replace("/", "-") + "-" + name)
+        d.mkdir(parents=True)
+        (d / "s.jsonl").write_text(rec("1", "user", text, timestamp="2026-01-01T00:00:00.000Z") + "\n")
+    monkeypatch.setattr(search, "embed_pending", lambda conn: 0)
+    monkeypatch.setattr(llm, "complete", lambda prompt, **k: '{"drafts": []}')
+
+    cli.main(["demo", "beta", "--yes"])
+
+    texts = [r[0] for r in connect().execute("SELECT text FROM chunks")]
+    assert texts == ["fix the beta navbar overflow on mobile"]
+    with pytest.raises(SystemExit) as e:
+        cli.main(["demo", "nomatch", "--yes"])
+    assert "No project matches" in str(e.value)
+
+
 def test_demo_cancels_without_reading_when_not_confirmed(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("GTM_HOME", str(tmp_path / "real"))

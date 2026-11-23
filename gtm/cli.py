@@ -189,30 +189,55 @@ def cmd_demo(a, conn):
     from . import search, status
     from .db import record
     from .draft import draft
-    from .ingest import ingest_all
+    from .ingest import ingest_file
 
     root = Path.home() / ".claude" / "projects"
-    files = list(root.glob("*/*.jsonl"))
-    if not files:
+    all_files = list(root.glob("*/*.jsonl"))
+    if not all_files:
         sys.exit("No Claude Code sessions found in ~/.claude/projects. Use Claude Code for a bit, then run `gtm demo`.")
+    strip = str(Path.home()).replace("/", "-") + "-"
+    short = lambda f: f.parent.name.removeprefix(strip)
+    counts = Counter(short(f) for f in all_files)
+    interactive = sys.stdin.isatty() and not a.yes
+
+    choice = a.project
+    if not choice and interactive:
+        listed = counts.most_common(20)
+        print(f"Found {len(all_files)} sessions in {len(counts)} projects:")
+        for i, (name, n) in enumerate(listed, 1):
+            print(f"  {i:>2}. {name}  ({n} sessions)")
+        if len(counts) > len(listed):
+            print(f"      ... and {len(counts) - len(listed)} more (type part of a name to pick one)")
+        choice = input("\nDemo which project? Number or part of a name, Enter for all: ").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(listed):
+            choice = listed[int(choice) - 1][0]
+    files = all_files
+    if choice:
+        files = [f for f in all_files if choice.lower() in short(f).lower()]
+        if not files:
+            sys.exit(f"No project matches '{choice}'. Run `gtm demo` to pick from the list.")
+    picked = Counter(short(f) for f in files)
     if not a.yes:
-        strip = str(Path.home()).replace("/", "-")
-        print(f"Found {len(files)} sessions in ~/.claude/projects:")
-        for name, n in Counter(f.parent.name.removeprefix(strip + "-") for f in files).most_common(8):
+        print(f"\nWill read {len(files)} sessions from:")
+        for name, n in picked.most_common(8):
             print(f"  {n:>3}  {name}")
-        print("\nThis will copy them into a throwaway folder, then send a digest of your last day of prompts and replies,\n"
+        if len(picked) > 8:
+            print(f"      ... and {len(picked) - 8} more projects")
+        print("\nThis copies them into a throwaway folder, then sends a digest of your latest prompts and replies,\n"
               "plus excerpts of related older sessions (secrets redacted by pattern), to `claude -p` to write drafts.\n"
-              "That includes any employer repos listed above. Nothing is installed and nothing is posted.")
+              "Nothing is installed and nothing is posted.")
         if not sys.stdin.isatty() or input("Continue? [y/N] ").strip().lower() != "y":
             sys.exit("Cancelled. Nothing was read or sent.")
 
     print("\nrunning the real pipeline on your sessions (first run downloads the search models):\n")
     with record(conn, "ingest", swallow=True) as r:
-        r.detail = f"{ingest_all(conn)} new chunks"
+        r.detail = f"{sum(ingest_file(conn, f) for f in files)} new chunks"
     with record(conn, "embed", swallow=True) as r:
         r.detail = f"{search.embed_pending(conn)} chunks"
-    day_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    hours = 24 if conn.execute("SELECT count(*) FROM chunks WHERE role='user' AND ts >= ?", (day_ago,)).fetchone()[0] else 168
+    newest = conn.execute("SELECT max(ts) FROM chunks WHERE role='user'").fetchone()[0]
+    age_h = (datetime.now(timezone.utc) - datetime.strptime(newest, "%Y-%m-%dT%H:%M:%S.000Z").replace(tzinfo=timezone.utc)
+             ).total_seconds() / 3600 if newest else 0
+    hours = 24 if age_h < 24 else int(age_h) + 24
     with record(conn, "draft", swallow=True) as r:
         drafts = draft(conn, hours=hours)
         r.detail = f"{len(drafts)} drafts from the last {hours}h"
@@ -311,8 +336,9 @@ def main(argv=None):
     sp = add("drafts", cmd_drafts, "list recent drafts saved in the database")
     sp.add_argument("-n", "--limit", type=int, default=10)
     sp.add_argument("--web", action="store_true", help="open them as an editable page instead of printing")
-    add("demo", cmd_demo, "try it on your real Claude Code sessions in a throwaway folder (installs nothing)").add_argument(
-        "-y", "--yes", action="store_true", help="skip the confirmation")
+    sp = add("demo", cmd_demo, "try it on your real Claude Code sessions in a throwaway folder (installs nothing)")
+    sp.add_argument("project", nargs="?", help="only use projects whose folder name contains this (default: pick from a list)")
+    sp.add_argument("-y", "--yes", action="store_true", help="skip the prompts (uses all projects unless one is given)")
 
     a = p.parse_args(argv)
     if a.fn is cmd_demo:
