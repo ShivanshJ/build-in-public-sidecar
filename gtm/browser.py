@@ -104,14 +104,16 @@ HOME_URL = {"x": "https://x.com/home", "linkedin": "https://www.linkedin.com/fee
 
 def _reuse_browser_login(site: str) -> bool:
     """Offer to copy this site's login cookies from the browser you already use. True when gtm's profile ends up signed in."""
-    from .chrome_cookies import CookieImportError, find_login, import_login
+    from .cookies import CookieImportError, find_login, import_login
 
     if not sys.stdin.isatty():
         return False
-    found = find_login(site)
+    found, notes = find_login(site)
     if not found:
+        if notes:
+            print(f"Can't reuse a browser login: {'; '.join(notes)}.")
         return False
-    name = found.browser.name
+    name = found.source.name
     if input(f"You're already signed in to {site} in {name}. Reuse that login? (copies only {site}'s cookies; "
              f"macOS may ask for your password) [y/N] ").strip().lower() not in ("y", "yes"):
         return False

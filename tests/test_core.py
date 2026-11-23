@@ -402,7 +402,7 @@ def test_save_pulled_prints_each_post_and_reports_new_vs_updated(conn, capsys):
     assert "new" in out and "updated" in out and "Shipped the thing. It took three weeks" in out and "3 likes" in out
 
 
-def _chrome_profile(base, key, rows, folder="Arc/User Data"):
+def _chrome_profile(home, key, rows, folder="Arc/User Data"):
     """A fake browser data dir whose Cookies db is encrypted the way Chromium does on macOS."""
     import hashlib
     import sqlite3
@@ -416,7 +416,7 @@ def _chrome_profile(base, key, rows, folder="Arc/User Data"):
         e = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).encryptor()
         return b"v10" + e.update(pad.update(data) + pad.finalize()) + e.finalize()
 
-    prof = base / folder / "Default"
+    prof = home / "Library/Application Support" / folder / "Default"
     prof.mkdir(parents=True)
     db = sqlite3.connect(prof / "Cookies")
     db.execute("create table cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite)")
@@ -427,41 +427,109 @@ def _chrome_profile(base, key, rows, folder="Arc/User Data"):
     db.close()
 
 
+def _firefox_profile(home, rows, folder="Firefox"):
+    import sqlite3
+
+    prof = home / "Library/Application Support" / folder / "Profiles" / "abc.default"
+    prof.mkdir(parents=True)
+    db = sqlite3.connect(prof / "cookies.sqlite")
+    db.execute("create table moz_cookies (host, name, value, path, expiry, isSecure, isHttpOnly, sameSite)")
+    for host, name, value in rows:
+        db.execute("insert into moz_cookies values (?,?,?,?,?,?,?,?)", (host, name, value, "/", 1_800_000_000, 1, 1, 2))
+    db.commit()
+    db.close()
+
+
+def _safari_file(home, rows):
+    """Cookies.binarycookies with one page: rows are (host, name, value, flags)."""
+    import struct
+
+    recs = []
+    for host, name, value, flags in rows:
+        strings = [host, name, "/", value]
+        offs, body = [], b""
+        for t in strings:
+            offs.append(56 + len(body))
+            body += t.encode() + b"\0"
+        size = 56 + len(body)
+        recs.append(struct.pack("<IIII4IQdd", size, 0, flags, 0, offs[0], offs[1], offs[2], offs[3], 0,
+                                1_800_000_000 - 978307200, 0) + body)
+    head = 8 + 4 * len(recs) + 4
+    offsets, pos = [], head
+    for r in recs:
+        offsets.append(pos)
+        pos += len(r)
+    page = struct.pack("<II", 0x100, len(recs)) + struct.pack(f"<{len(recs)}I", *offsets) + struct.pack("<I", 0) + b"".join(recs)
+    f = home / "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"cook" + struct.pack(">II", 1, len(page)) + page)
+
+
 def test_browser_login_import_reads_only_the_requested_site(tmp_path, monkeypatch):
-    from gtm import chrome_cookies as cc
+    from gtm import cookies as cc
 
     key = b"k" * 16
     _chrome_profile(tmp_path, key, [
         (".x.com", "auth_token", "secret-x", True), ("x.com", "ct0", "csrf", False),
         (".google.com", "SID", "google-secret", True), (".linkedin.com", "li_at", "li", True),
         (".notx.com", "auth_token", "lookalike", True)])
-    monkeypatch.setattr(cc, "safe_storage_key", lambda service: key)
-    found = cc.find_login("x", tmp_path)
-    assert found.browser.name == "Arc"
-    cookies = cc.import_login(found, "x")
-    assert {c["name"]: c["value"] for c in cookies} == {"auth_token": "secret-x", "ct0": "csrf"}
-    assert cookies[0]["expires"] == 1_800_000_000 and cookies[0]["sameSite"] == "Lax" and cookies[0]["httpOnly"]
+    monkeypatch.setattr(cc.Chromium, "_key", lambda self: key)
+    found = cc.find_login("x", tmp_path).found
+    assert found.source.name == "Arc"
+    got = cc.import_login(found, "x")
+    assert {c["name"]: c["value"] for c in got} == {"auth_token": "secret-x", "ct0": "csrf"}
+    assert got[0]["expires"] == 1_800_000_000 and got[0]["sameSite"] == "Lax" and got[0]["httpOnly"]
 
 
 def test_find_login_prefers_default_browser_and_needs_no_key(tmp_path, monkeypatch):
-    from gtm import chrome_cookies as cc
+    from gtm import cookies as cc
 
-    key = b"k" * 16
-    _chrome_profile(tmp_path, key, [(".x.com", "auth_token", "a", True)], "Arc/User Data")
-    _chrome_profile(tmp_path, key, [(".x.com", "auth_token", "c", True)], "Google/Chrome")
-    monkeypatch.setattr(cc, "safe_storage_key", lambda service: pytest.fail("key must not be read just to find a login"))
+    _chrome_profile(tmp_path, b"k" * 16, [(".x.com", "auth_token", "a", True)], "Arc/User Data")
+    _chrome_profile(tmp_path, b"k" * 16, [(".x.com", "auth_token", "c", True)], "Google/Chrome")
+    monkeypatch.setattr(cc.Chromium, "_key", lambda self: pytest.fail("key must not be read just to find a login"))
     monkeypatch.setattr(cc, "default_bundle", lambda: "com.google.Chrome")
-    assert cc.find_login("x", tmp_path).browser.name == "Chrome"
+    assert cc.find_login("x", tmp_path).found.source.name == "Chrome"
     monkeypatch.setattr(cc, "default_bundle", lambda: "company.thebrowser.browser")
-    assert cc.find_login("x", tmp_path).browser.name == "Arc"
+    assert cc.find_login("x", tmp_path).found.source.name == "Arc"
 
 
 def test_find_login_ignores_browsers_not_signed_in(tmp_path):
-    from gtm import chrome_cookies as cc
+    from gtm import cookies as cc
 
     _chrome_profile(tmp_path, b"k" * 16, [(".x.com", "guest_id", "g", True)])
-    assert cc.find_login("x", tmp_path) is None
-    assert cc.find_login("linkedin", tmp_path) is None
+    assert cc.find_login("x", tmp_path).found is None
+    assert cc.find_login("linkedin", tmp_path).found is None
+
+
+def test_firefox_login_is_read_in_plain(tmp_path, monkeypatch):
+    from gtm import cookies as cc
+
+    _firefox_profile(tmp_path, [(".linkedin.com", "li_at", "tok"), (".example.com", "other", "no")], folder="zen")
+    monkeypatch.setattr(cc, "default_bundle", lambda: "app.zen-browser.zen")
+    found = cc.find_login("linkedin", tmp_path).found
+    assert found.source.name == "Zen"
+    (c,) = cc.import_login(found, "linkedin")
+    assert (c["name"], c["value"], c["sameSite"], c["expires"]) == ("li_at", "tok", "Strict", 1_800_000_000)
+
+
+def test_safari_login_parsed_from_binarycookies(tmp_path, monkeypatch):
+    from gtm import cookies as cc
+
+    _safari_file(tmp_path, [(".x.com", "auth_token", "safari-tok", 5), (".google.com", "SID", "nope", 0)])
+    monkeypatch.setattr(cc, "default_bundle", lambda: "com.apple.Safari")
+    found = cc.find_login("x", tmp_path).found
+    assert found.source.name == "Safari"
+    (c,) = cc.import_login(found, "x")
+    assert (c["name"], c["value"], c["secure"], c["httpOnly"]) == ("auth_token", "safari-tok", True, True)
+
+
+def test_unsupported_default_browser_is_explained(tmp_path, monkeypatch):
+    from gtm import cookies as cc
+
+    monkeypatch.setattr(cc, "default_bundle", lambda: "com.example.Weird")
+    monkeypatch.setattr(cc, "app_name", lambda b: "Weird")
+    lookup = cc.find_login("x", tmp_path)
+    assert lookup.found is None and "Weird" in lookup.notes[0]
 
 
 def test_login_falls_back_to_window_when_not_interactive():
