@@ -301,7 +301,7 @@ def test_demo_runs_real_pipeline_on_claude_sessions_in_a_sandbox(tmp_path, monke
     assert os.path.exists(sandbox + "/drafts/latest.html")
     sc = connect()
     assert sc.execute("SELECT count(*) FROM chunks").fetchone()[0] == 2
-    assert [r["step"] for r in sc.execute("SELECT step FROM runs ORDER BY id")] == ["ingest", "embed", "draft"]
+    assert [r["step"] for r in sc.execute("SELECT step FROM runs ORDER BY id")] == ["ingest", "embed", "enrich", "draft"]
     assert real.execute("SELECT count(*) FROM chunks").fetchone()[0] == 0
 
 
@@ -389,3 +389,70 @@ def test_save_pulled_prints_each_post_and_reports_new_vs_updated(conn, capsys):
     assert save_pulled(conn, posts) == (0, 1)
     out = capsys.readouterr().out
     assert "new" in out and "updated" in out and "Shipped the thing. It took three weeks" in out and "3 likes" in out
+
+
+def test_enrich_parse_keeps_only_verifiable_people_and_sanitizes():
+    from gtm import enrich
+
+    drafts = [{"platform": "x", "text": "t"}, {"platform": "linkedin", "text": "u"}]
+    out = json.dumps({"drafts": [
+        {"i": 0, "people": [
+            {"kind": "rising", "name": "Lauren", "handle": "@poteto", "url": "https://x.com/poteto/status/1",
+             "evidence": "posted about agents, Nov 2026", "why": "w", "where": "post"},
+            {"kind": "peer", "name": "Dup", "handle": "poteto", "url": "https://x.com/poteto/status/2"},
+            {"kind": "big", "name": "NoLink", "handle": "x", "url": ""},
+            {"kind": "big", "name": "Js", "handle": "x", "url": "javascript:alert(1)"},
+            {"kind": "weird", "name": "Bad handle", "handle": "not a handle!", "url": "https://x.com/a"}]},
+        {"i": 1, "people": [{"kind": "peer", "name": "Ann", "handle": "ann", "url": "https://linkedin.com/in/ann"}]},
+        {"i": 9, "people": [{"name": "Out of range", "url": "https://x.com/z"}]}]})
+    res = enrich.parse("noise " + out + " noise", drafts)
+    assert [p["name"] for p in res[0]] == ["Lauren", "Bad handle"]
+    assert res[0][0]["handle"] == "poteto" and res[0][1]["handle"] == "" and res[0][1]["kind"] == "peer"
+    assert res[1][0]["handle"] == ""  # LinkedIn has no X handle
+    assert enrich.parse("not json", drafts) == [[], []]
+
+
+def test_popup_shows_tag_suggestions_as_a_dropdown_and_escapes(conn):
+    from gtm import notify
+
+    people = [{"kind": "rising", "name": "<b>Lauren</b>", "handle": "poteto", "url": "https://x.com/poteto/status/1\"onmouseover=\"x",
+               "evidence": "<script>1</script>", "why": "she posts about agents", "where": "post"}]
+    page = notify.render_page([{"platform": "x", "text": "hi", "why": "", "suggestions": people}])
+    assert "<details" in page and "Who to tag (1)" in page and "Add @poteto" in page
+    assert "<b>Lauren</b>" not in page and "<script>1</script>" not in page and '"onmouseover="' not in page
+    assert "Who to tag" not in notify.render_page([{"platform": "x", "text": "hi", "why": ""}])
+
+
+def test_draft_runs_enrich_step_saves_suggestions_and_counts_usage_once(conn, monkeypatch):
+    from gtm import draft as d, enrich, llm
+    from gtm.db import add_usage, iso_now, record
+
+    monkeypatch.setenv("GTM_NO_OPEN", "1")
+    conn.execute("INSERT INTO sessions(session_id,path,project) VALUES('s','p','/x/proj')")
+    conn.execute("INSERT INTO chunks(session_id,uuid,role,text,ts) VALUES('s','1','user','add retry logic to the uploader',?)", (iso_now(),))
+    calls = []
+
+    def fake(prompt, timeout=300, web=False):
+        calls.append(web)
+        add_usage(10, 5, 0.01)
+        if web:
+            return json.dumps({"drafts": [{"i": 0, "people": [{"kind": "peer", "name": "Ann", "handle": "ann",
+                                                               "url": "https://x.com/ann/status/1"}]}]})
+        if len(calls) == 1:
+            return '{"angles":[{"angle":"retries","query":"retry"}]}'
+        return '{"drafts":[{"platform":"x","text":"Added backoff to my uploader.","why":"w"}]}'
+
+    monkeypatch.setattr(llm, "complete", fake)
+    with record(conn, "tick"):
+        with record(conn, "draft"):
+            out = d.draft(conn, hours=24)
+    assert calls == [False, False, True]
+    assert out[0]["suggestions"][0]["handle"] == "ann"
+    assert json.loads(conn.execute("SELECT suggestions FROM drafts").fetchone()[0])[0]["name"] == "Ann"
+    by = {r["step"]: r["llm_calls"] for r in conn.execute("SELECT step, llm_calls FROM runs")}
+    assert by == {"enrich": 1, "draft": 2, "tick": 0}
+
+    monkeypatch.setenv("GTM_ENRICH", "false")
+    calls.clear()
+    d.draft(conn, hours=24)
+    assert True not in calls and not enrich.enabled()

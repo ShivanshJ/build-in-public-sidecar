@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS my_posts(
   score REAL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS drafts(
   id INTEGER PRIMARY KEY, created_at TEXT, platform TEXT, text TEXT,
-  why TEXT, status TEXT DEFAULT 'new');
+  why TEXT, status TEXT DEFAULT 'new', suggestions TEXT);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS runs(
   id INTEGER PRIMARY KEY, started_at TEXT, finished_at TEXT, step TEXT, status TEXT, detail TEXT,
@@ -55,6 +55,8 @@ def connect() -> sqlite3.Connection:
                      ("tokens_in", "INTEGER DEFAULT 0"), ("tokens_out", "INTEGER DEFAULT 0"), ("cost_usd", "REAL DEFAULT 0")):
         if col not in have:
             c.execute(f"ALTER TABLE runs ADD COLUMN {col} {typ}")
+    if "suggestions" not in {r["name"] for r in c.execute("PRAGMA table_info(drafts)")}:
+        c.execute("ALTER TABLE drafts ADD COLUMN suggestions TEXT")
     return c
 
 
@@ -106,10 +108,13 @@ def hours_since(ts: str | None) -> float | None:
     return (datetime.now(timezone.utc) - then).total_seconds() / 3600
 
 
+_ACTIVE: list = []
+
 STEP_LABELS = {
     "ingest": "reading your Claude Code sessions",
     "embed": "building the search index (the first run downloads the models)",
     "draft": "drafting posts",
+    "enrich": "searching the web for people to tag",
     "learn": "learning your writing style from your posts",
     "sync_x": "pulling your posts from X",
     "sync_linkedin": "pulling your posts from LinkedIn",
@@ -135,15 +140,22 @@ class record:
     def __enter__(self):
         self.started = iso_now()
         self.base = dict(USAGE)
+        self.children = {k: 0 for k in USAGE}
+        _ACTIVE.append(self)
         self._spinner = ui.working(STEP_LABELS.get(self.step, self.step))
         self._spinner.__enter__()
         return self
 
     def __exit__(self, exc_type, exc, tb):
         self._spinner.__exit__(None, None, None)
+        _ACTIVE.remove(self)
         if exc:
             self.status, self.detail = "error", f"{type(exc).__name__}: {exc}"[:500]
-        used = {k: USAGE[k] - self.base[k] for k in USAGE}
+        total = {k: USAGE[k] - self.base[k] for k in USAGE}
+        if _ACTIVE:
+            for k in USAGE:
+                _ACTIVE[-1].children[k] += total[k]
+        used = {k: total[k] - self.children[k] for k in USAGE}  # a step's own usage, not its nested steps'
         self.conn.execute(
             """INSERT INTO runs(started_at, finished_at, step, status, detail, trigger, command,
                                 llm_calls, tokens_in, tokens_out, cost_usd) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",

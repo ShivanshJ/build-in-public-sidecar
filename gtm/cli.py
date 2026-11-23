@@ -153,6 +153,11 @@ def cmd_drafts(a, conn):
                 print(textwrap.fill(para, width, initial_indent="    ", subsequent_indent="    ") if para.strip() else "")
             if r["why"]:
                 print(dim(textwrap.fill("why: " + r["why"], width, initial_indent="    ", subsequent_indent="         ")))
+            people = json.loads(r["suggestions"]) if r["suggestions"] else []
+            if people:
+                names = ", ".join(f"@{p['handle']}" if p["handle"] else p["name"] for p in people[:4])
+                print(dim(textwrap.fill(f"tag ideas: {names}  (reasons and sources: gtm drafts --web)", width,
+                                        initial_indent="    ", subsequent_indent="              ")))
         print()
     print(dim("Open these to edit and post: gtm drafts --web   ·   Show more: gtm drafts -n 20"))
 
@@ -227,6 +232,7 @@ def cmd_demo(a, conn):
             print(f"      ... and {len(picked) - 8} more projects")
         print("\nThis copies them into a throwaway folder, then sends a digest of your latest prompts and replies,\n"
               "plus excerpts of related older sessions (secrets redacted by pattern), to `claude -p` to write drafts.\n"
+              "The drafts themselves are then used in web searches for people to tag.\n"
               "Nothing is installed and nothing is posted.")
         if not sys.stdin.isatty() or input("Continue? [y/N] ").strip().lower() != "y":
             sys.exit("Cancelled. Nothing was read or sent.")

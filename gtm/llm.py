@@ -16,14 +16,19 @@ def default_cmd() -> str:
     return f"{cmd} --model {model}" if model else cmd
 
 
-def complete(prompt: str, timeout: int = 300) -> str:
+def complete(prompt: str, timeout: int = 300, web: bool = False) -> str:
     """Run the prompt through `claude -p` (or GTM_LLM_CMD, which must read stdin and write stdout).
+
+    web=True lets Claude use its WebSearch and WebFetch tools (default command only).
 
     With the default command we ask for JSON so token usage and cost can be logged; a custom command is
     counted as one call with unknown tokens.
     """
     custom = cfg("llm_cmd")
-    cmd = shlex.split(custom or default_cmd() + " --output-format json")
+    if web and custom:
+        raise RuntimeError("web search needs the default `claude -p` command; unset llm_cmd")
+    tools = " --allowedTools WebSearch,WebFetch" if web else ""
+    cmd = shlex.split(custom or default_cmd() + tools + " --output-format json")
     env = {**os.environ, "GTM_DRAFTING": "1"}
     r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, env=env, timeout=timeout, cwd=home())
     if r.returncode != 0:
