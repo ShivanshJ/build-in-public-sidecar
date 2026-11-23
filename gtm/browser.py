@@ -89,7 +89,7 @@ def _playwright():
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        raise RuntimeError("browser sync needs playwright: uv pip install 'gtm[browser]'") from None
+        raise RuntimeError("browser sync needs playwright: uv tool install --reinstall ".[browser]" (from the repo folder)") from None
     return sync_playwright()
 
 

@@ -28,7 +28,7 @@ git clone https://github.com/ShivanshJ/build-in-public-sidecar && cd build-in-pu
 uv tool install ".[browser]"
 ```
 
-This puts a `code_gtm` command on your PATH (run `uv tool update-shell` if your shell can't find it). The tool lives in its own environment, so there's nothing to activate, and the capture hook keeps working after you delete the clone. To update later: `git pull && uv tool install --reinstall ".[browser]"`, then `code_gtm setup` once more.
+This puts a `code_gtm` command on your PATH (run `uv tool update-shell` if your shell can't find it). The tool lives in its own environment, so there's nothing to activate, and the capture hook keeps working after you delete the clone. To update later: `git pull && uv tool install --reinstall ".[browser]"`, then `code_gtm setup` once more. (If you installed an earlier version, which was named `gtm`, run `uv tool uninstall gtm` once first, or both will try to provide `code_gtm`.)
 
 ### 2. See it work first (optional, installs nothing)
 
@@ -59,7 +59,7 @@ If you're already signed in to the site in your everyday browser (Arc, Chrome, B
 ### 5. Draft one, then schedule it
 
 ```sh
-code_gtm draft              # writes drafts from your last day and opens the popup
+code_gtm draft              # lists your 5 most recent sessions: pick some (1,3), m for more, or Enter for the last day; opens the popup
 code_gtm schedule           # macOS: runs at 09:30, 13:30 and 18:30 every day
 ```
 
@@ -86,7 +86,7 @@ Every draft is kept, so `code_gtm drafts` is your history of what the tool has p
 
 | Command | What it does |
 |---|---|
-| `code_gtm draft [--about "<query>"] [--hours N] [--no-send]` | Draft now. `--about` grounds drafts in a search instead of the last day; `--no-send` prints instead of opening the popup |
+| `code_gtm draft [--about "<query>"] [--hours N] [--no-send]` | Draft now. In a terminal it first offers your 5 most recent sessions (`m` shows more, numbers like `1,3` pick them, Enter drafts from everything in the last day). `--hours N` or `--about` skip the picker; `--about` grounds drafts in a search; `--no-send` prints instead of opening the popup |
 | `code_gtm tick [--force]` | What the scheduler runs: ingest, index, sync accounts, draft if there's new work. Prints a line per step |
 | `code_gtm schedule [--remove]` | Install or remove the macOS launchd job |
 

@@ -25,11 +25,24 @@ def examples(conn, n_top: int = 8, n_recent: int = 4) -> str:
     return "\n\n".join(out) or "(none yet)"
 
 
-def digest(conn, since: str, max_chars: int = 12000) -> str:
+PROMPT_ID = "count(DISTINCT substr(uuid, 1, instr(uuid, ':') - 1))"  # a long prompt is several chunks but one prompt
+
+
+def recent_sessions(conn) -> list[dict]:
+    """Every captured session, newest first, with its project, last activity, prompt count and opening prompt."""
+    return [dict(r) for r in conn.execute(
+        f"""SELECT s.session_id, s.project, s.first_ts, s.last_ts,
+              (SELECT {PROMPT_ID} FROM chunks c WHERE c.session_id = s.session_id AND c.role = 'user') AS prompts,
+              (SELECT text FROM chunks c WHERE c.session_id = s.session_id AND c.role = 'user' ORDER BY id LIMIT 1) AS first
+            FROM sessions s ORDER BY s.last_ts DESC""")]
+
+
+def digest(conn, since: str, max_chars: int = 12000, sessions: list[str] | None = None) -> str:
+    only = f" AND c.session_id IN ({','.join('?' * len(sessions))})" if sessions else ""
     rows = conn.execute(
-        """SELECT s.session_id, s.project, c.role, c.text FROM chunks c
-           JOIN sessions s ON s.session_id = c.session_id WHERE c.ts >= ? ORDER BY c.ts""",
-        (since,),
+        f"""SELECT s.session_id, s.project, c.role, c.text FROM chunks c
+            JOIN sessions s ON s.session_id = c.session_id WHERE c.ts >= ?{only} ORDER BY c.ts""",
+        (since, *(sessions or [])),
     ).fetchall()
     by_session: dict[str, dict] = {}
     for r in rows:
@@ -138,7 +151,8 @@ def parse_drafts(out: str) -> list[dict]:
     return drafts
 
 
-def draft(conn, about: str | None = None, hours: int = 24, send: bool = True) -> list[dict]:
+def draft(conn, about: str | None = None, hours: int = 24, send: bool = True, sessions: list[str] | None = None) -> list[dict]:
+    """`sessions` limits the drafts to those session ids (all their work, not just the last `hours`)."""
     history = ""
     if about:
         ui.say(f'  searching your sessions for "{about}"')
@@ -147,11 +161,15 @@ def draft(conn, about: str | None = None, hours: int = 24, send: bool = True) ->
         ui.say(f"  found {len(hits)} passages")
     else:
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        material = digest(conn, since)
+        if sessions:
+            since = conn.execute(f"SELECT min(first_ts) FROM sessions WHERE session_id IN ({','.join('?' * len(sessions))})",
+                                 sessions).fetchone()[0] or since
+        material = digest(conn, since, sessions=sessions)
+        scope = f"the {len(sessions)} session(s) you picked" if sessions else f"the last {hours}h"
         if not material.strip():
-            ui.say(f"  no Claude Code activity in the last {hours}h, nothing to write about")
+            ui.say(f"  no Claude Code activity in {scope}, nothing to write about")
             return []
-        ui.say(f"  read the last {hours}h of work: {material.count('## project:')} session(s)")
+        ui.say(f"  read {scope}: {material.count('## project:')} project(s)")
         with ui.working("asking Claude what's worth posting about"):
             angles = propose_angles(material)
         ui.say(f"  Claude found {len(angles)} angle(s):")
@@ -176,7 +194,7 @@ def draft(conn, about: str | None = None, hours: int = 24, send: bool = True) ->
             (now, d["platform"], d["text"], d["why"]),
         )
         d["id"], d["created_at"] = cur.lastrowid, now
-    if not about:
+    if not about and not sessions:
         kv_set(conn, "last_draft_ts", now)  # so a scheduled tick doesn't redraft what a manual run already covered
     conn.commit()
     if send and drafts:
@@ -256,8 +274,7 @@ def _tick(conn, force: bool) -> str:
 
         last_draft = kv_get(conn, "last_draft_ts")
         since = last_draft or (now - timedelta(hours=CATCHUP_MIN_HOURS)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        new = conn.execute("SELECT count(DISTINCT substr(uuid, 1, instr(uuid, ':') - 1)) FROM chunks WHERE role='user' AND ts >= ?",
-                           (since,)).fetchone()[0]
+        new = conn.execute(f"SELECT {PROMPT_ID} FROM chunks WHERE role='user' AND ts >= ?", (since,)).fetchone()[0]
         if new < MIN_NEW_USER_MSGS:
             why = (f"no new Claude Code prompts since {'your last draft' if last_draft else 'yesterday'}" if new == 0 else
                    f"only {new} new prompt{'s' if new != 1 else ''} since {'your last draft' if last_draft else 'yesterday'} "

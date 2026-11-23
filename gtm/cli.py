@@ -95,15 +95,57 @@ def cmd_learn(a, conn):
     print(learn(conn) or "no posts imported yet; run import-x / import-posts / sync first")
 
 
-def cmd_draft(a, conn):
-    from . import search
-    from .draft import draft
+def _pick_sessions(conn, first: int = 5, page: int = 10) -> list[str] | None:
+    """Offer the most recent sessions; returns the chosen session ids, or None for 'all recent work'."""
+    import re
 
     from . import ui
+    from .draft import recent_sessions
+    from .status import when
 
+    rows = recent_sessions(conn)
+    if not rows:
+        return None
+    shown = 0
+
+    def show(n):
+        nonlocal shown
+        for i, r in enumerate(rows[shown:shown + n], shown + 1):
+            proj = (r["project"] or "?").rstrip("/").split("/")[-1]
+            n_p = r["prompts"]
+            when_ = when(r["last_ts"]) if r["last_ts"] else ""
+            print(f"  {i:>2}. {proj:<22} {when_:<16} {n_p:>3} prompt{'' if n_p == 1 else 's'}  {ui.dim(ui.snippet(r['first'], 60, 0))}")
+        shown = min(shown + n, len(rows))
+
+    print("Recent sessions:")
+    show(first)
+    while True:
+        more = f" m = {len(rows) - shown} more," if shown < len(rows) else ""
+        ans = input(f"\nDraft from which? Numbers like 1,3 ·{more} Enter = all work from the last 24h: ").strip().lower()
+        if not ans:
+            return None
+        if ans == "m" and shown < len(rows):
+            show(page)
+            continue
+        try:
+            nums = [int(x) for x in re.split(r"[,\s]+", ans)]
+        except ValueError:
+            nums = []
+        if nums and all(1 <= n <= shown for n in nums):
+            return [rows[n - 1]["session_id"] for n in dict.fromkeys(nums)]
+        print("Type numbers from the list (like 1,3)" + (", or m for more." if shown < len(rows) else "."))
+
+
+def cmd_draft(a, conn):
+    from . import search, ui
+    from .draft import draft
+
+    sessions = None
+    if sys.stdin.isatty() and not a.about and a.hours is None:
+        sessions = _pick_sessions(conn)
     with ui.working("building the search index"):
         search.embed_pending(conn)
-    drafts = draft(conn, about=a.about, hours=a.hours, send=not a.no_send)
+    drafts = draft(conn, about=a.about, hours=a.hours or 24, send=not a.no_send, sessions=sessions)
     if a.no_send:
         for d in drafts:
             print(f"--- [{d['platform']}] {d['why']}\n{d['text']}\n")
@@ -339,7 +381,7 @@ def main(argv=None):
     add("learn", cmd_learn, "rewrite style.md from your best posts")
     sp = add("draft", cmd_draft, "draft posts now")
     sp.add_argument("--about", help="ground drafts in a search query instead of the last day")
-    sp.add_argument("--hours", type=int, default=24)
+    sp.add_argument("--hours", type=int, help="draft from the last N hours (skips the session picker)")
     sp.add_argument("--no-send", action="store_true", help="print instead of showing the popup")
     add("tick", cmd_tick, "scheduled job: ingest, index, sync, draft, popup").add_argument(
         "--force", action="store_true", help="ignore the minimum gap since the last tick")

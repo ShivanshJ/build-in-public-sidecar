@@ -551,7 +551,7 @@ def test_a_manual_draft_counts_as_the_last_draft_so_ticks_dont_redo_it(conn, mon
     from gtm import draft, llm, notify
     from gtm.db import kv_get
 
-    monkeypatch.setattr(draft, "digest", lambda c, since: "## project: p\nwork")
+    monkeypatch.setattr(draft, "digest", lambda c, since, **k: "## project: p\nwork")
     monkeypatch.setattr(draft, "propose_angles", lambda m: [])
     monkeypatch.setattr(llm, "complete", lambda p, **k: '{"drafts":[{"platform":"x","text":"hello world","why":"w"}]}')
     monkeypatch.setattr(notify, "send_batch", lambda d: "stdout")
@@ -627,3 +627,47 @@ def test_tick_marks_learn_skipped_when_drafting_fails(conn, monkeypatch):
     rows = {r["step"]: (r["status"], r["detail"]) for r in conn.execute("SELECT * FROM runs")}
     assert rows["draft"][0] == "error" and "usage limit" in rows["draft"][1]
     assert rows["learn"] == ("skip", "did not run because drafting failed")
+
+
+def _session(conn, sid, project, ts, prompts, text="did the thing"):
+    conn.execute("INSERT INTO sessions(session_id, path, project, first_ts, last_ts) VALUES(?,?,?,?,?)", (sid, "p", project, ts, ts))
+    for i in range(prompts):
+        conn.execute("INSERT INTO chunks(session_id, uuid, role, text, ts) VALUES(?,?,'user',?,?)", (sid, f"{sid}m{i}:0", f"{text} {sid} {i}", ts))
+    conn.commit()
+
+
+def test_session_picker_lists_five_then_more_and_returns_choices(conn, monkeypatch, capsys):
+    from gtm import cli
+
+    for i in range(8):  # s7 is the newest
+        _session(conn, f"s{i}", f"/x/proj{i}", f"2026-11-2{i}T10:00:00.000Z", i + 1)
+
+    prompts = []
+
+    def run(*typed):
+        answers = iter(typed)
+        monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or next(answers))
+        return cli._pick_sessions(conn)
+
+    assert run("") is None  # Enter: all recent work
+    capsys.readouterr()
+    got = run("9", "m", "7, 2")  # 9 is not listed yet; m reveals the rest; then 7th and 2nd newest, in typed order
+    out = capsys.readouterr().out
+    assert "proj3" in out and out.index("proj3") < out.index("proj2")  # newest first
+    assert "m = 3 more" in prompts[1] and "m =" not in prompts[-1]  # offered until everything is shown
+    assert got == ["s1", "s6"]
+
+
+def test_draft_from_picked_sessions_only_reads_those(conn, monkeypatch):
+    from gtm import draft, llm, notify
+    from gtm.db import kv_get
+
+    _session(conn, "a", "/x/alpha", "2026-11-01T10:00:00.000Z", 2, text="alpha work")
+    _session(conn, "b", "/x/beta", "2026-11-02T10:00:00.000Z", 2, text="beta work")
+    seen = {}
+    monkeypatch.setattr(draft, "propose_angles", lambda m: seen.setdefault("material", m) and [])
+    monkeypatch.setattr(llm, "complete", lambda p, **k: '{"drafts":[{"platform":"x","text":"hello world","why":"w"}]}')
+    monkeypatch.setattr(notify, "send_batch", lambda d: "stdout")
+    draft.draft(conn, sessions=["a"])
+    assert "alpha work" in seen["material"] and "beta work" not in seen["material"]
+    assert kv_get(conn, "last_draft_ts") is None  # a hand-picked draft doesn't count as "everything covered"
