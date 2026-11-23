@@ -69,14 +69,16 @@ code_gtm schedule           # macOS: runs at 09:30, 13:30 and 18:30 every day
 30 9,13,18 * * *  GTM_TRIGGER=schedule /path/to/coder-gtm-machine/.venv/bin/code_gtm tick
 ```
 
-### 6. Check it's working
+### 6. See what it wrote, and check it's working
 
 ```sh
+code_gtm drafts             # every draft it has written, newest first, grouped by run
+code_gtm drafts --web       # the same drafts as an editable page, with Copy and Post buttons
 code_gtm status             # hook, scheduler, accounts, last result of every step
 code_gtm status --web       # the same as a dashboard in your browser, with full history
 ```
 
-After that you don't need to do anything: when there's something worth posting, the drafts page opens.
+Every draft is kept, so `code_gtm drafts` is your history of what the tool has produced, including drafts from days ago that you didn't get to post. After that you don't need to do anything: when there's something worth posting, the drafts page opens.
 
 ## Commands
 
@@ -94,7 +96,7 @@ After that you don't need to do anything: when there's something worth posting, 
 |---|---|
 | `code_gtm status` | Is it working: hook, scheduler and the command it runs, accounts, last result of each step, model usage |
 | `code_gtm log [--errors]` | Every step ever run: when, scheduled or manual, outcome, tokens and cost |
-| `code_gtm drafts [-n N]` | Your last N drafts, newest first (they're saved in the database) |
+| `code_gtm drafts [-n N] [--web]` | **History of everything it has drafted**, newest first, grouped by run (default last 10). `--web` opens them as the editable popup so you can still copy or post an old one |
 | `code_gtm inbox` | Reopen the latest drafts popup |
 
 **Your posts**
@@ -153,6 +155,7 @@ Scheduled runs pull each account at most every `sync_hours` (default 20), so the
 Drafts open as a local HTML page (no server, no network). Each card is editable, shows a character count (X is flagged over 280), and has **Copy** and **Post** buttons. Post opens the X or LinkedIn composer with your text prefilled.
 
 - Edits in the page aren't saved back. The database keeps the model's original text, so copy or post from the page.
+- Closed the page without posting? Run `code_gtm drafts --web` to reopen recent drafts, or `code_gtm inbox` for the latest batch only.
 - Every draft is saved in `gtm.db` and each batch as `~/.agent_sessions_gtm/drafts/<timestamp>.html`. A draft's `status` of `sent` means it was shown, not posted.
 - Set `notify` to `stdout` to print drafts instead of opening the page.
 
