@@ -1,0 +1,340 @@
+import json
+
+import pytest
+
+from gtm import cli, search
+from gtm.db import connect
+from gtm.draft import parse_drafts
+from gtm.ingest import clean, ingest_file, parse, redact, split_text
+
+
+@pytest.fixture
+def conn(tmp_path, monkeypatch):
+    monkeypatch.setenv("GTM_HOME", str(tmp_path / "gtm"))
+    return connect()
+
+
+def rec(uuid, type_, content, **kw):
+    return json.dumps({"uuid": uuid, "type": type_, "message": {"content": content},
+                       "timestamp": "2026-11-20T10:00:00.000Z", "cwd": "/x/proj", **kw})
+
+
+def test_parse_keeps_only_human_text():
+    lines = [
+        rec("1", "user", "build me a BM25 search over my transcripts please"),
+        rec("2", "user", [{"type": "tool_result", "content": "ls output that is long enough to count"}]),
+        rec("3", "assistant", [{"type": "tool_use", "name": "Bash"}, {"type": "text", "text": "Done: FTS5 index created."}]),
+        rec("4", "user", "<system-reminder>ignore me entirely, long reminder text</system-reminder>"),
+        rec("5", "user", "meta context that should be dropped entirely", isMeta=True),
+        rec("6", "assistant", "sidechain text that should be dropped entirely", isSidechain=True),
+        "not json",
+    ]
+    out = list(parse(lines))
+    assert [r["role"] for r in out] == ["user", "assistant"]
+    assert out[1]["text"] == "Done: FTS5 index created."
+
+
+def test_redact_secrets():
+    s = "key sk-abcdefghijklmnopqrstuvwx and ghp_abcdefghijklmnopqrstuv and password=hunter2hunter2"
+    out = redact(s)
+    assert "sk-abc" not in out and "ghp_" not in out and "hunter2" not in out
+    assert clean("<system-reminder>x</system-reminder>hello there world, how are you") == "hello there world, how are you"
+
+
+def test_split_text_respects_limit():
+    pieces = split_text("word " * 1000, limit=500)
+    assert pieces and all(len(p) <= 500 for p in pieces)
+
+
+def test_ingest_is_incremental_and_idempotent(conn, tmp_path):
+    f = tmp_path / "abc123.jsonl"
+    f.write_text(rec("1", "user", "first message about vector search design") + "\n")
+    assert ingest_file(conn, f) == 1
+    assert ingest_file(conn, f) == 0
+    with open(f, "a") as fh:
+        fh.write(rec("2", "assistant", "second message about reranking approach") + "\n")
+        fh.write(rec("3", "user", "partial line without newline yet"))
+    assert ingest_file(conn, f) == 1
+    with open(f, "a") as fh:
+        fh.write("\n")
+    assert ingest_file(conn, f) == 1
+    assert conn.execute("SELECT count(*) FROM chunks").fetchone()[0] == 3
+
+
+def test_bm25_and_rrf(conn, tmp_path):
+    f = tmp_path / "s1.jsonl"
+    f.write_text(
+        rec("1", "user", "we fixed the launchd scheduling bug on macOS") + "\n"
+        + rec("2", "user", "wrote the landing page copy for the product") + "\n"
+    )
+    ingest_file(conn, f)
+    ids = search.bm25(conn, "launchd scheduling")
+    assert len(ids) == 1
+    assert search.bm25(conn, "!!!") == []
+    assert search.rrf([[1, 2], [2, 3]])[0] == 2
+
+
+def test_parse_drafts_filters_bad_items():
+    out = json.dumps({"drafts": [
+        {"platform": "x", "text": "ok post", "why": "w"},
+        {"platform": "x", "text": "a" * 281, "why": "too long"},
+        {"platform": "tiktok", "text": "nope"},
+        {"platform": "linkedin", "text": "token=abcdef123456 shipped it", "why": ""},
+    ]})
+    got = parse_drafts("Sure!\n" + out)
+    assert [d["platform"] for d in got] == ["x", "linkedin"]
+    assert "abcdef123456" not in got[1]["text"]
+    assert parse_drafts("no json here") == []
+
+
+def test_install_hook_idempotent(tmp_path):
+    s = tmp_path / "settings.json"
+    s.write_text(json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo hi"}]}]}}))
+    assert cli.install_hook(s) is True
+    assert cli.install_hook(s) is False
+    data = json.loads(s.read_text())
+    assert len(data["hooks"]["Stop"]) == 2 and "SessionEnd" in data["hooks"]
+    assert (tmp_path / "settings.json.bak-gtm").exists()
+
+
+def test_bm25_until_excludes_recent(conn, tmp_path):
+    f = tmp_path / "s2.jsonl"
+    old = rec("1", "user", "fixed the github pages jekyll deploy error").replace("2026-11-20", "2026-10-01")
+    new = rec("2", "user", "hit the github pages deploy error again today")
+    f.write_text(old + "\n" + new + "\n")
+    ingest_file(conn, f)
+    assert len(search.bm25(conn, "github pages deploy")) == 2
+    assert len(search.bm25(conn, "github pages deploy", until="2026-11-01T00:00:00.000Z")) == 1
+
+
+def test_history_for_only_returns_older_work(conn, tmp_path, monkeypatch):
+    from gtm import draft
+
+    f = tmp_path / "s3.jsonl"
+    old = rec("1", "user", "fixed the github pages jekyll deploy error").replace("2026-11-20", "2026-10-01")
+    new = rec("2", "user", "hit the github pages deploy error again today")
+    f.write_text(old + "\n" + new + "\n")
+    ingest_file(conn, f)
+    monkeypatch.setattr(search, "dense", lambda *a, **k: [])
+    monkeypatch.setattr(search, "_reranker", lambda: type("R", (), {"rerank": lambda s, q, d: [1.0] * len(d)})())
+    out = draft.history_for(conn, [{"angle": "pages bug", "query": "github pages deploy"}], before="2026-11-01T00:00:00.000Z")
+    assert "2026-10-01" in out and "again today" not in out
+
+
+def test_propose_angles_tolerates_garbage(monkeypatch):
+    from gtm import draft, llm
+
+    monkeypatch.setattr(llm, "complete", lambda p, **k: "not json at all")
+    assert draft.propose_angles("x") == []
+    monkeypatch.setattr(llm, "complete", lambda p, **k: 'ok {"angles":[{"angle":"a","query":"q"},{"angle":"b"}]}')
+    assert draft.propose_angles("x") == [{"angle": "a", "query": "q"}]
+
+
+def test_render_page_escapes_untrusted_text():
+    from gtm.notify import render_page
+
+    page = render_page([{"platform": "x", "text": "</textarea><script>alert(1)</script>", "why": "<b>why</b>"}])
+    assert "<script>alert(1)</script>" not in page
+    assert "&lt;/textarea&gt;" in page and "&lt;b&gt;why&lt;/b&gt;" in page
+
+
+def test_popup_writes_latest_without_opening(tmp_path, monkeypatch):
+    from gtm import notify
+
+    monkeypatch.setenv("GTM_HOME", str(tmp_path / "gtm"))
+    monkeypatch.setenv("GTM_NO_OPEN", "1")
+    path = notify.popup([{"platform": "linkedin", "text": "hello", "why": "w"}])
+    assert path.exists() and (path.parent / "latest.html").exists()
+
+
+def test_tick_skips_when_locked(conn, tmp_path):
+    import fcntl
+
+    from gtm.db import home
+    from gtm.draft import tick
+
+    with open(home() / "tick.lock", "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert tick(conn).startswith("skip: another tick")
+
+
+def test_tick_skips_within_min_gap(conn):
+    from gtm.db import iso_now, kv_set
+    from gtm.draft import tick
+
+    kv_set(conn, "last_tick_ts", iso_now())
+    assert tick(conn).startswith("skip: last tick was under")
+
+
+def test_record_logs_ok_skip_and_error(conn):
+    from gtm.db import record
+
+    with record(conn, "a") as r:
+        r.detail = "fine"
+    with record(conn, "b") as r:
+        r.skip("nothing to do")
+    with record(conn, "c", swallow=True):
+        raise ValueError("boom")
+    with pytest.raises(ValueError):
+        with record(conn, "d"):
+            raise ValueError("raised")
+    rows = {r["step"]: (r["status"], r["detail"]) for r in conn.execute("SELECT * FROM runs")}
+    assert rows["a"] == ("ok", "fine") and rows["b"] == ("skip", "nothing to do")
+    assert rows["c"][0] == "error" and "boom" in rows["c"][1] and rows["d"][0] == "error"
+
+
+def test_parse_x_metrics_and_normalize():
+    from gtm.browser import normalize_x, parse_x_metrics
+
+    assert parse_x_metrics("5 replies, 2 reposts, 1,200 likes, 3 bookmarks, 9K views") == {"replies": 5, "reposts": 2, "likes": 1200}
+    raw = [
+        {"href": "/me/status/1", "datetime": "2026-11-01T10:00:00.000Z", "text": "mine", "metrics": "1 reply, 0 reposts, 4 likes", "social": ""},
+        {"href": "/other/status/2", "datetime": "", "text": "theirs", "metrics": "", "social": ""},
+        {"href": "/me/status/3", "datetime": "", "text": "boosted", "metrics": "", "social": "You reposted"},
+    ]
+    posts = normalize_x(raw, "me")
+    assert [p["id"] for p in posts] == ["1"] and posts[0]["likes"] == 4 and posts[0]["replies"] == 1
+
+
+def test_normalize_linkedin_and_age():
+    from datetime import datetime, timezone
+
+    from gtm.browser import normalize_linkedin, parse_age
+
+    now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+    assert parse_age("2w • Edited", now) == "2026-11-08T00:00:00.000Z" and parse_age("garbage") is None
+    posts = normalize_linkedin([{"urn": "urn:li:activity:77", "text": "hi", "age": "3d", "reactions": "1,234", "comments": "5 comments"}])
+    assert posts[0]["id"] == "linkedin-77" and posts[0]["likes"] == 1234 and posts[0]["replies"] == 5
+
+
+def test_upsert_never_duplicates_and_refreshes_metrics(conn, tmp_path):
+    from gtm.x_posts import _post, import_text, upsert
+
+    upsert(conn, _post("1", "same text", "2026-11-01T00:00:00.000Z", likes=1))
+    upsert(conn, _post("1", "same text", "2026-11-01T00:00:00.000Z", likes=9))
+    f = tmp_path / "p.txt"
+    f.write_text("a file post\n---\nanother")
+    import_text(conn, str(f), "linkedin")
+    import_text(conn, str(f), "linkedin")
+    upsert(conn, _post("linkedin-77", "a file post", "2026-10-01T00:00:00.000Z", likes=5, platform="linkedin"))
+    rows = {r["text"]: r for r in conn.execute("SELECT * FROM my_posts")}
+    assert conn.execute("SELECT count(*) FROM my_posts").fetchone()[0] == 3
+    assert rows["same text"]["likes"] == 9
+    assert rows["a file post"]["likes"] == 5 and rows["a file post"]["created_at"] == "2026-10-01T00:00:00.000Z"
+
+
+def test_sync_site_throttles_scheduled_runs_but_not_manual(conn, monkeypatch):
+    from gtm import browser
+    from gtm.db import iso_now, kv_set, record
+
+    calls = []
+    monkeypatch.setattr(browser, "pull", lambda site: calls.append(site) or [])
+    with record(conn, "s1") as r:
+        browser.sync_site(conn, "x", r)
+    assert r.status == "skip" and "not connected" in r.detail
+    kv_set(conn, "login_x", iso_now())
+    with record(conn, "s2") as r:
+        browser.sync_site(conn, "x", r)
+    with record(conn, "s3") as r:
+        browser.sync_site(conn, "x", r)
+    with record(conn, "s4") as r:
+        browser.sync_site(conn, "x", r, force=True)
+    assert calls == ["x", "x"] and r.status == "ok" and "synced 0h ago" in dict(
+        (x["step"], x["detail"]) for x in conn.execute("SELECT step, detail FROM runs"))["s3"]
+
+
+def test_llm_usage_is_recorded_on_the_step(conn, monkeypatch):
+    import subprocess
+
+    from gtm import llm
+    from gtm.db import record
+
+    out = json.dumps({"result": " hi ", "total_cost_usd": 0.05,
+                      "usage": {"input_tokens": 2, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 50, "output_tokens": 7}})
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, out, ""))
+    with record(conn, "draft"):
+        assert llm.complete("x") == "hi"
+    r = conn.execute("SELECT * FROM runs").fetchone()
+    assert (r["llm_calls"], r["tokens_in"], r["tokens_out"], r["cost_usd"]) == (1, 152, 7, 0.05)
+    assert r["trigger"] == "manual" and r["command"].startswith("gtm")
+
+
+def test_dashboard_escapes_and_demo_runs_in_a_sandbox(tmp_path, monkeypatch, capsys):
+    from gtm import status
+    from gtm.db import connect, record
+
+    monkeypatch.setenv("GTM_HOME", str(tmp_path / "real"))
+    monkeypatch.setenv("GTM_NO_OPEN", "1")
+    c = connect()
+    with record(c, "sync_x", swallow=True):
+        raise RuntimeError("<script>alert(1)</script>")
+    page = status.render_html(status.collect(c))
+    assert "<script>alert(1)</script>" not in page and "&lt;script&gt;" in page
+
+
+
+def test_demo_runs_real_pipeline_on_claude_sessions_in_a_sandbox(tmp_path, monkeypatch):
+    import os
+    from datetime import datetime, timezone
+
+    from gtm import draft, llm
+    from gtm.db import connect
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("GTM_HOME", str(tmp_path / "real"))
+    monkeypatch.setenv("GTM_NO_OPEN", "1")
+    real = connect()
+    proj = tmp_path / "home" / ".claude" / "projects" / "-x-proj"
+    proj.mkdir(parents=True)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    (proj / "s1.jsonl").write_text("\n".join([
+        rec("1", "user", "add retry logic to the uploader", timestamp=now),
+        rec("2", "assistant", "added exponential backoff to uploader.py", timestamp=now)]) + "\n")
+    monkeypatch.setattr(search, "embed_pending", lambda conn: 0)
+    monkeypatch.setattr(llm, "complete", lambda prompt, **k: json.dumps(
+        {"drafts": [{"platform": "x", "text": "Added backoff to my uploader today.", "why": "w"}]}))
+
+    cli.main(["demo", "--yes"])
+
+    sandbox = os.environ["GTM_HOME"]
+    assert sandbox != str(tmp_path / "real") and os.path.exists(sandbox + "/status.html")
+    assert os.path.exists(sandbox + "/drafts/latest.html")
+    sc = connect()
+    assert sc.execute("SELECT count(*) FROM chunks").fetchone()[0] == 2
+    assert [r["step"] for r in sc.execute("SELECT step FROM runs ORDER BY id")] == ["ingest", "embed", "draft"]
+    assert real.execute("SELECT count(*) FROM chunks").fetchone()[0] == 0
+
+
+def test_demo_cancels_without_reading_when_not_confirmed(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("GTM_HOME", str(tmp_path / "real"))
+    proj = tmp_path / "home" / ".claude" / "projects" / "-x-proj"
+    proj.mkdir(parents=True)
+    (proj / "s1.jsonl").write_text(rec("1", "user", "hello there friend") + "\n")
+    with pytest.raises(SystemExit) as e:
+        cli.main(["demo"])
+    assert "Cancelled" in str(e.value)
+
+
+def test_drafts_command_lists_saved_drafts(conn, capsys, monkeypatch):
+    from gtm.db import iso_now
+
+    monkeypatch.setenv("GTM_NO_OPEN", "1")
+    assert conn.execute("SELECT 1").fetchone()
+    for t in ("first draft", "second draft"):
+        conn.execute("INSERT INTO drafts(created_at, platform, text, why) VALUES(?,?,?,?)", (iso_now(), "x", t, "w"))
+    conn.commit()
+    cli.main(["drafts", "-n", "1"])
+    out = capsys.readouterr().out
+    assert "second draft" in out and "first draft" not in out
+
+
+def test_web_flag_opens_dashboard_for_status_and_log(conn, capsys, monkeypatch):
+    from gtm.db import home
+
+    monkeypatch.setenv("GTM_NO_OPEN", "1")
+    cli.main(["log", "--web"])
+    assert (home() / "status.html").exists()
+    (home() / "status.html").unlink()
+    cli.main(["status", "--web"])
+    assert (home() / "status.html").exists()
