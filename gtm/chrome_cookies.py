@@ -1,18 +1,43 @@
-"""Copy one site's login cookies out of the user's everyday Chrome (macOS) so gtm's own profile starts signed in.
+"""Copy one site's login cookies out of the user's everyday browser (macOS, Chromium family) into gtm's profile.
 
-Only cookies whose host belongs to the requested site are read. Nothing is written back to Chrome and the cookie
-database is read from a temporary copy.
+Only cookies whose host belongs to the requested site are read. Nothing is written back to the browser and the
+cookie database is read from a temporary copy. Which browser has the login is found from cookie names alone; the
+browser's decryption key (a Keychain prompt) is only requested once the user has agreed.
 """
 import hashlib
 import json
+import plistlib
 import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
-CHROME = Path.home() / "Library/Application Support/Google/Chrome"
+APP_SUPPORT = Path.home() / "Library/Application Support"
+
+
+class Browser(NamedTuple):
+    name: str
+    bundle: str
+    folder: str
+    keychain: str
+
+
+class Found(NamedTuple):
+    browser: Browser
+    db: Path
+
+
+BROWSERS = [
+    Browser("Arc", "company.thebrowser.browser", "Arc/User Data", "Arc Safe Storage"),
+    Browser("Chrome", "com.google.Chrome", "Google/Chrome", "Chrome Safe Storage"),
+    Browser("Brave", "com.brave.Browser", "BraveSoftware/Brave-Browser", "Brave Safe Storage"),
+    Browser("Edge", "com.microsoft.edgemac", "Microsoft Edge", "Microsoft Edge Safe Storage"),
+    Browser("Vivaldi", "com.vivaldi.Vivaldi", "Vivaldi", "Vivaldi Safe Storage"),
+    Browser("Chromium", "org.chromium.Chromium", "Chromium", "Chromium Safe Storage"),
+]
 DOMAINS = {"x": ("x.com", "twitter.com"), "linkedin": ("linkedin.com",)}
 AUTH_COOKIE = {"x": "auth_token", "linkedin": "li_at"}
 SAMESITE = {0: "None", 1: "Lax", 2: "Strict"}
@@ -22,13 +47,13 @@ class CookieImportError(RuntimeError):
     pass
 
 
-def safe_storage_key() -> bytes:
-    """Chrome's cookie key. Reading it makes macOS ask for the login password (Keychain)."""
+def safe_storage_key(service: str) -> bytes:
+    """The browser's cookie key. Reading it makes macOS ask for the login password (Keychain)."""
     if sys.platform != "darwin":
         raise CookieImportError("cookie import only works on macOS")
-    r = subprocess.run(["security", "find-generic-password", "-w", "-s", "Chrome Safe Storage"], capture_output=True, text=True)
+    r = subprocess.run(["security", "find-generic-password", "-w", "-s", service], capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
-        raise CookieImportError("could not read Chrome's key from the Keychain (access denied, or Chrome is not installed)")
+        raise CookieImportError("could not read the browser's key from the Keychain (access denied?)")
     return hashlib.pbkdf2_hmac("sha1", r.stdout.strip().encode(), b"saltysalt", 1003, 16)
 
 
@@ -54,20 +79,28 @@ def _db_files(profile: Path) -> Path | None:
     return None
 
 
-def read_cookies(db: Path, key: bytes, domains: tuple[str, ...]) -> list[dict]:
+def _query(db: Path, sql: str, args: list) -> list:
     with tempfile.TemporaryDirectory() as tmp:
         for suffix in ("", "-wal", "-shm"):
             if Path(str(db) + suffix).exists():
                 shutil.copy2(str(db) + suffix, Path(tmp) / ("Cookies" + suffix))
         conn = sqlite3.connect(Path(tmp) / "Cookies")
         try:
-            where = " OR ".join("host_key = ? OR host_key LIKE ?" for _ in domains)
-            args = [a for d in domains for a in (d, f"%.{d}")]
-            rows = conn.execute(
-                f"SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite "
-                f"FROM cookies WHERE {where}", args).fetchall()
+            return conn.execute(sql, args).fetchall()
+        except sqlite3.Error:
+            return []
         finally:
             conn.close()
+
+
+def _host_filter(domains: tuple[str, ...]) -> tuple[str, list[str]]:
+    return " OR ".join("host_key = ? OR host_key LIKE ?" for _ in domains), [a for d in domains for a in (d, f"%.{d}")]
+
+
+def read_cookies(db: Path, key: bytes, domains: tuple[str, ...]) -> list[dict]:
+    where, args = _host_filter(domains)
+    rows = _query(db, "SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite "
+                      f"FROM cookies WHERE {where}", args)
     out = []
     for host, name, value, enc, path, expires, secure, httponly, samesite in rows:
         v = decrypt(enc, key, host) if enc else value
@@ -82,23 +115,38 @@ def read_cookies(db: Path, key: bytes, domains: tuple[str, ...]) -> list[dict]:
     return out
 
 
-def profiles() -> list[Path]:
+def default_bundle() -> str | None:
     try:
-        info = json.loads((CHROME / "Local State").read_text())["profile"]["info_cache"]
-        names = list(info)
+        plist = plistlib.loads((Path.home() / "Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist").read_bytes())
+        return next((h["LSHandlerRoleAll"] for h in plist["LSHandlers"] if h.get("LSHandlerURLScheme") == "https"), None)
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def profiles(data_dir: Path) -> list[Path]:
+    try:
+        names = list(json.loads((data_dir / "Local State").read_text())["profile"]["info_cache"])
     except (OSError, KeyError, ValueError):
         names = ["Default"]
-    return [CHROME / n for n in names if _db_files(CHROME / n)]
+    return [data_dir / n for n in names if _db_files(data_dir / n)]
 
 
-def import_login(site: str, root_profiles: list[Path] | None = None) -> list[dict]:
-    """The site's cookies from the first Chrome profile that is signed in to it."""
-    found = root_profiles if root_profiles is not None else profiles()
-    if not found:
-        raise CookieImportError("no Chrome profile found")
-    key = safe_storage_key()
-    for prof in found:
-        cookies = read_cookies(_db_files(prof), key, DOMAINS[site])
-        if any(c["name"] == AUTH_COOKIE[site] for c in cookies):
-            return cookies
-    raise CookieImportError(f"none of your Chrome profiles is signed in to {site}")
+def _has_login(db: Path, site: str) -> bool:
+    where, args = _host_filter(DOMAINS[site])
+    return bool(_query(db, f"SELECT 1 FROM cookies WHERE name = ? AND ({where}) LIMIT 1", [AUTH_COOKIE[site], *args]))
+
+
+def find_login(site: str, base: Path = APP_SUPPORT) -> Found | None:
+    """The first browser profile (default browser first) holding a signed-in session for `site`. Reads cookie names only."""
+    default = default_bundle()
+    for b in sorted(BROWSERS, key=lambda b: b.bundle != default):
+        for prof in profiles(base / b.folder):
+            db = _db_files(prof)
+            if _has_login(db, site):
+                return Found(b, db)
+    return None
+
+
+def import_login(found: Found, site: str) -> list[dict]:
+    key = safe_storage_key(found.browser.keychain)
+    return read_cookies(found.db, key, DOMAINS[site])

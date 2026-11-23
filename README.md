@@ -49,12 +49,12 @@ This adds a `Stop` and `SessionEnd` hook to `~/.claude/settings.json` (a backup 
 ### 4. Teach it your voice
 
 ```sh
-code_gtm login x            # offers to reuse your everyday Chrome login (or opens a window to sign in)
+code_gtm login x            # offers to reuse the login from your everyday browser (or opens a window to sign in)
 code_gtm login linkedin     # same
 code_gtm sync               # pull your past posts and their likes/replies (lists each one as it's saved)
 ```
 
-`login` asks first: say `y` and gtm copies only your Chrome cookies for that site (x.com/twitter.com, or linkedin.com) into its own browser profile, so you don't sign in again. macOS asks for your login password to unlock Chrome's key, and nothing in Chrome is changed. Say `n`, or if the copy doesn't produce a working login, a separate Chrome window opens instead: sign in once there ("Continue with Google" works). Either way gtm never stores your password, and the session lives in a dedicated profile, because Chrome doesn't let other programs drive your everyday one. No Chrome, or don't want browser access? Import instead: `code_gtm import-x tweets.js` (your X archive) or `code_gtm import-posts posts.txt --platform linkedin`. With no past posts, drafts use a plain default style.
+If you're already signed in to the site in Arc, Chrome, Brave, Edge, Vivaldi or Chromium (your default browser is tried first), `login` offers to reuse that: say `y` and gtm copies only that site's cookies into its own browser profile. macOS may ask for your login password to unlock the browser's key, and nothing in your browser is changed. Say `n`, or if the copy doesn't produce a working login, a Chrome window opens instead: sign in once there ("Continue with Google" works). Either way gtm never stores your password; its session lives in a dedicated profile, because browsers don't let other programs drive your everyday one. Safari and Firefox logins can't be reused. No Chrome, or don't want browser access? Import instead: `code_gtm import-x tweets.js` (your X archive) or `code_gtm import-posts posts.txt --platform linkedin`. With no past posts, drafts use a plain default style.
 
 ### 5. Draft one, then schedule it
 
@@ -103,7 +103,7 @@ Every draft is kept, so `code_gtm drafts` is your history of what the tool has p
 
 | Command | What it does |
 |---|---|
-| `code_gtm login x\|linkedin` | Connect an account (reuse your Chrome login, or sign in once in a browser window) |
+| `code_gtm login x\|linkedin` | Connect an account (reuse your browser's login, or sign in once in a window) |
 | `code_gtm sync [x\|linkedin]` | Pull your latest posts and engagement now |
 | `code_gtm learn` | Rewrite your style guide from your best posts (also runs daily on its own) |
 | `code_gtm import-x <tweets.js>` / `code_gtm import-posts <file> --platform linkedin` | Import posts from an X archive or a text file (posts separated by `---`) |
@@ -188,12 +188,12 @@ Settings live in `~/.agent_sessions_gtm/config.json` (mode 600). Any key can be 
 - Transcripts stay in `~/.agent_sessions_gtm/gtm.db`, outside any repo, so they can't be committed by accident. Redaction is pattern-based and best effort, not a guarantee.
 - A digest of recent work, plus excerpts of related older sessions, is sent to the model behind `claude -p` to write drafts. That includes work in employer repos if you use Claude Code there. **Review drafts for confidential details before posting.**
 - Drafts and the popup stay on your machine apart from that model call.
-- Reading your accounts through the browser keeps cookies in `~/.agent_sessions_gtm/browser`; treat that folder like a credential. If you let `login` reuse your Chrome login, your Chrome cookies for that one site (never other sites) are read once and copied there.
+- Reading your accounts through the browser keeps cookies in `~/.agent_sessions_gtm/browser`; treat that folder like a credential. If you let `login` reuse your browser's login, that browser's cookies for that one site (never other sites) are read once and copied there.
 
 ## Limitations
 
 - **Account pulls are unverified.** The X and LinkedIn extraction logic is unit-tested and headless Chrome launches against a local test page, but the page selectors haven't been checked against the real sites, and those sites change without notice. This is also scraping, which both sites' terms restrict; reading only your own profile a few times a day is low volume but carries some account risk. If a pull fails, `code_gtm status` shows the error and a screenshot is saved to `~/.agent_sessions_gtm/debug/`. The file imports are the fallback.
-- **Chrome login reuse is macOS-only and untested against a real Chrome profile** (it is unit-tested on a synthetic cookie database). X or LinkedIn may also ask you to verify a login that suddenly appears in a second browser; if so, the separate-window sign-in is the fallback.
+- **Login reuse is macOS-only, Chromium browsers only, and the cookie copy isn't verified end to end against a real browser** (it is unit-tested on a synthetic cookie database). X or LinkedIn may also ask you to verify a login that suddenly appears in a second browser; if so, the separate-window sign-in is the fallback.
 - LinkedIn has no API for reading your own posts, so the browser is the only automatic route there.
 - The popup layout is checked, but its Copy and Post buttons haven't been clicked through in a browser. LinkedIn's prefill link may not behave consistently.
 - The launchd job and X API sync haven't been tested against live services. The scheduler only fires while the laptop is awake.

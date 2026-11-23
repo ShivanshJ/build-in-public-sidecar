@@ -402,8 +402,8 @@ def test_save_pulled_prints_each_post_and_reports_new_vs_updated(conn, capsys):
     assert "new" in out and "updated" in out and "Shipped the thing. It took three weeks" in out and "3 likes" in out
 
 
-def _chrome_profile(tmp_path, key, rows):
-    """A fake Chrome profile whose Cookies db is encrypted the way Chrome does on macOS."""
+def _chrome_profile(base, key, rows, folder="Arc/User Data"):
+    """A fake browser data dir whose Cookies db is encrypted the way Chromium does on macOS."""
     import hashlib
     import sqlite3
 
@@ -416,43 +416,55 @@ def _chrome_profile(tmp_path, key, rows):
         e = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).encryptor()
         return b"v10" + e.update(pad.update(data) + pad.finalize()) + e.finalize()
 
-    prof = tmp_path / "Profile 1"
-    (prof / "Network").mkdir(parents=True)
-    db = sqlite3.connect(prof / "Network" / "Cookies")
+    prof = base / folder / "Default"
+    prof.mkdir(parents=True)
+    db = sqlite3.connect(prof / "Cookies")
     db.execute("create table cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite)")
     for host, name, value, host_hash in rows:
         db.execute("insert into cookies values (?,?,?,?,?,?,?,?,?)",
                    (host, name, "", enc(host, value, host_hash), "/", (1_800_000_000 + 11644473600) * 1_000_000, 1, 1, 1))
     db.commit()
     db.close()
-    return prof
 
 
-def test_chrome_cookie_import_reads_only_the_requested_site(tmp_path, monkeypatch):
+def test_browser_login_import_reads_only_the_requested_site(tmp_path, monkeypatch):
     from gtm import chrome_cookies as cc
 
     key = b"k" * 16
-    prof = _chrome_profile(tmp_path, key, [
+    _chrome_profile(tmp_path, key, [
         (".x.com", "auth_token", "secret-x", True), ("x.com", "ct0", "csrf", False),
         (".google.com", "SID", "google-secret", True), (".linkedin.com", "li_at", "li", True),
         (".notx.com", "auth_token", "lookalike", True)])
-    monkeypatch.setattr(cc, "safe_storage_key", lambda: key)
-    cookies = cc.import_login("x", [prof])
+    monkeypatch.setattr(cc, "safe_storage_key", lambda service: key)
+    found = cc.find_login("x", tmp_path)
+    assert found.browser.name == "Arc"
+    cookies = cc.import_login(found, "x")
     assert {c["name"]: c["value"] for c in cookies} == {"auth_token": "secret-x", "ct0": "csrf"}
     assert cookies[0]["expires"] == 1_800_000_000 and cookies[0]["sameSite"] == "Lax" and cookies[0]["httpOnly"]
 
 
-def test_chrome_cookie_import_skips_profiles_not_signed_in(tmp_path, monkeypatch):
+def test_find_login_prefers_default_browser_and_needs_no_key(tmp_path, monkeypatch):
     from gtm import chrome_cookies as cc
 
     key = b"k" * 16
-    prof = _chrome_profile(tmp_path, key, [(".x.com", "guest_id", "g", True)])
-    monkeypatch.setattr(cc, "safe_storage_key", lambda: key)
-    with pytest.raises(cc.CookieImportError, match="signed in to x"):
-        cc.import_login("x", [prof])
+    _chrome_profile(tmp_path, key, [(".x.com", "auth_token", "a", True)], "Arc/User Data")
+    _chrome_profile(tmp_path, key, [(".x.com", "auth_token", "c", True)], "Google/Chrome")
+    monkeypatch.setattr(cc, "safe_storage_key", lambda service: pytest.fail("key must not be read just to find a login"))
+    monkeypatch.setattr(cc, "default_bundle", lambda: "com.google.Chrome")
+    assert cc.find_login("x", tmp_path).browser.name == "Chrome"
+    monkeypatch.setattr(cc, "default_bundle", lambda: "company.thebrowser.browser")
+    assert cc.find_login("x", tmp_path).browser.name == "Arc"
 
 
-def test_login_falls_back_to_window_when_not_interactive(conn, monkeypatch):
+def test_find_login_ignores_browsers_not_signed_in(tmp_path):
+    from gtm import chrome_cookies as cc
+
+    _chrome_profile(tmp_path, b"k" * 16, [(".x.com", "guest_id", "g", True)])
+    assert cc.find_login("x", tmp_path) is None
+    assert cc.find_login("linkedin", tmp_path) is None
+
+
+def test_login_falls_back_to_window_when_not_interactive():
     from gtm import browser
 
-    assert browser._reuse_chrome_login("x") is False  # pytest stdin is not a tty: never touches Chrome or the Keychain
+    assert browser._reuse_browser_login("x") is False  # pytest stdin is not a tty: never touches any browser or the Keychain
