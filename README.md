@@ -35,7 +35,7 @@ source .venv/bin/activate        # the commands below assume gtm is on your PATH
 gtm demo
 ```
 
-Runs the real thing once on your own Claude Code sessions and opens two pages: the drafts popup and a status dashboard. It lists your projects so you can **pick one** (or press Enter for all), then **asks before doing anything**, because a digest of your recent work goes to `claude -p` to write the drafts. Pick a project that isn't an employer repo. To skip the list: `gtm demo my-repo` (matches any project whose folder name contains `my-repo`). Everything lives in a throwaway folder it prints at the end, so it's safe to delete. The first run downloads the search models and can take a minute on a large history.
+Runs the real thing once on your own Claude Code sessions and opens two pages: the drafts popup and a status dashboard. It lists your projects so you can **pick one** (or press Enter for all), then **asks before doing anything**, because a digest of your recent work goes to `claude -p` to write the drafts. Pick a project that isn't an employer repo. Everything lives in a throwaway folder it prints at the end, so it's safe to delete. The first run downloads the search models and can take a minute on a large history.
 
 ### 3. Turn it on
 

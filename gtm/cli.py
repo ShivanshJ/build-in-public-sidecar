@@ -200,8 +200,8 @@ def cmd_demo(a, conn):
     counts = Counter(short(f) for f in all_files)
     interactive = sys.stdin.isatty() and not a.yes
 
-    choice = a.project
-    if not choice and interactive:
+    choice = ""
+    if interactive:
         listed = counts.most_common(20)
         print(f"Found {len(all_files)} sessions in {len(counts)} projects:")
         for i, (name, n) in enumerate(listed, 1):
@@ -215,7 +215,7 @@ def cmd_demo(a, conn):
     if choice:
         files = [f for f in all_files if choice.lower() in short(f).lower()]
         if not files:
-            sys.exit(f"No project matches '{choice}'. Run `gtm demo` to pick from the list.")
+            sys.exit(f"No project matches '{choice}'.")
     picked = Counter(short(f) for f in files)
     if not a.yes:
         print(f"\nWill read {len(files)} sessions from:")
@@ -235,8 +235,8 @@ def cmd_demo(a, conn):
     with record(conn, "embed", swallow=True) as r:
         r.detail = f"{search.embed_pending(conn)} chunks"
     newest = conn.execute("SELECT max(ts) FROM chunks WHERE role='user'").fetchone()[0]
-    age_h = (datetime.now(timezone.utc) - datetime.strptime(newest, "%Y-%m-%dT%H:%M:%S.000Z").replace(tzinfo=timezone.utc)
-             ).total_seconds() / 3600 if newest else 0
+    age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(newest.replace("Z", "+00:00"))).total_seconds() / 3600 \
+        if newest else 0
     hours = 24 if age_h < 24 else int(age_h) + 24
     with record(conn, "draft", swallow=True) as r:
         drafts = draft(conn, hours=hours)
@@ -337,8 +337,7 @@ def main(argv=None):
     sp.add_argument("-n", "--limit", type=int, default=10)
     sp.add_argument("--web", action="store_true", help="open them as an editable page instead of printing")
     sp = add("demo", cmd_demo, "try it on your real Claude Code sessions in a throwaway folder (installs nothing)")
-    sp.add_argument("project", nargs="?", help="only use projects whose folder name contains this (default: pick from a list)")
-    sp.add_argument("-y", "--yes", action="store_true", help="skip the prompts (uses all projects unless one is given)")
+    sp.add_argument("-y", "--yes", action="store_true", help="skip the prompts and use all projects")
 
     a = p.parse_args(argv)
     if a.fn is cmd_demo:

@@ -319,16 +319,20 @@ def test_demo_can_be_limited_to_one_project(tmp_path, monkeypatch):
     for name, text in (("alpha-app", "build the alpha uploader with retries"), ("beta-site", "fix the beta navbar overflow on mobile")):
         d = base / ("-" + str(tmp_path / "home").strip("/").replace("/", "-") + "-" + name)
         d.mkdir(parents=True)
-        (d / "s.jsonl").write_text(rec("1", "user", text, timestamp="2026-01-01T00:00:00.000Z") + "\n")
+        (d / "s.jsonl").write_text(rec("1", "user", text, timestamp="2026-01-01T03:04:05.920Z") + "\n")
     monkeypatch.setattr(search, "embed_pending", lambda conn: 0)
     monkeypatch.setattr(llm, "complete", lambda prompt, **k: '{"drafts": []}')
 
-    cli.main(["demo", "beta", "--yes"])
+    answers = iter(["beta", "y"])
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    cli.main(["demo"])
 
     texts = [r[0] for r in connect().execute("SELECT text FROM chunks")]
     assert texts == ["fix the beta navbar overflow on mobile"]
+    answers = iter(["nomatch"])
     with pytest.raises(SystemExit) as e:
-        cli.main(["demo", "nomatch", "--yes"])
+        cli.main(["demo"])
     assert "No project matches" in str(e.value)
 
 
