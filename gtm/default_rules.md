@@ -1,0 +1,5 @@
+- One idea per post. Lead with the concrete thing (what broke, what shipped, the number), not a warm-up.
+- Plain first person. Short sentences. No hype words, no "excited to share", no emojis, no hashtags.
+- Show the real detail: the error, the before/after, the surprising cause. Skip generic advice.
+- End on the takeaway or the open question. No "thoughts?" or engagement bait.
+- X posts stay under 280 characters; never split into a thread unless asked.

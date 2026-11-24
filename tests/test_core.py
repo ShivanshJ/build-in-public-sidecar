@@ -678,6 +678,6 @@ def test_rules_md_goes_into_the_prompt_and_is_optional(tmp_path, monkeypatch):
     monkeypatch.setenv("GTM_HOME", str(tmp_path))
     from gtm import db
     c = db.connect()
-    assert "(none)" in draft.build_prompt("x", c)
+    assert "One idea per post" in draft.build_prompt("x", c)  # bundled default
     (tmp_path / "rules.md").write_text("Never use emojis.")
     assert "Never use emojis." in draft.build_prompt("x", c)

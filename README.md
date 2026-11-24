@@ -28,7 +28,9 @@ git clone https://github.com/ShivanshJ/build-in-public-sidecar && cd build-in-pu
 uv tool install ".[browser]"
 ```
 
-This puts a `code_gtm` command on your PATH (run `uv tool update-shell` if your shell can't find it). The tool lives in its own environment, so there's nothing to activate, and the capture hook keeps working after you delete the clone. To update later: `git pull && uv tool install --reinstall ".[browser]"`, then `code_gtm setup` once more. (If you installed an earlier version, which was named `gtm`, run `uv tool uninstall gtm` once first, or both will try to provide `code_gtm`.)
+This puts a `code_gtm` command on your PATH. 
+To update later: `git pull && uv tool install --reinstall ".[browser]"`, then `code_gtm setup` once more. 
+If you installed an earlier version, which was named `gtm`, run `uv tool uninstall gtm` once first, or both will try to provide `code_gtm`.
 
 ### 2. See it work first (optional, installs nothing)
 
@@ -36,7 +38,7 @@ This puts a `code_gtm` command on your PATH (run `uv tool update-shell` if your 
 code_gtm demo
 ```
 
-Runs the real thing once on your own Claude Code sessions and opens two pages: the drafts popup and a status dashboard. It lists your projects so you can **pick one** (or press Enter for all), then **asks before doing anything**, because a digest of your recent work goes to `claude -p` to write the drafts. Pick a project that isn't an employer repo. Everything lives in a throwaway folder it prints at the end, so it's safe to delete. The first run downloads the search models and can take a minute on a large history.
+A digest of your recent work goes to `claude -p` to write the drafts. Pick a project that isn't an employer repo. Everything lives in a throwaway folder it prints at the end, so it's safe to delete.
 
 ### 3. Turn it on
 
@@ -44,7 +46,8 @@ Runs the real thing once on your own Claude Code sessions and opens two pages: t
 code_gtm setup
 ```
 
-This adds a `Stop` and `SessionEnd` hook to `~/.claude/settings.json` (a backup is saved next to it) and backfills your existing sessions. From now on every session is saved automatically.
+This adds a `Stop` and `SessionEnd` hook to `~/.claude/settings.json` (a backup is saved next to it). 
+It backfills your existing sessions.
 
 ### 4. Teach it your voice
 
@@ -63,7 +66,7 @@ code_gtm draft              # lists your 5 most recent sessions: pick some (1,3)
 code_gtm schedule           # macOS: runs at 09:30, 13:30 and 18:30 every day
 ```
 
-`code_gtm draft` makes two model calls, so it uses real tokens. The scheduled run only drafts when you've done something new (3+ prompts since the last draft), so quiet days cost nothing. On Linux, add a cron line instead:
+`code_gtm draft` makes 2 model calls, so it uses real tokens.
 
 ```
 30 9,13,18 * * *  GTM_TRIGGER=schedule /path/to/build-in-public-sidecar/.venv/bin/code_gtm tick
@@ -78,7 +81,6 @@ code_gtm status             # hook, scheduler, accounts, last result of every st
 code_gtm status --web       # the same as a dashboard in your browser, with full history
 ```
 
-Every draft is kept, so `code_gtm drafts` is your history of what the tool has produced, including drafts from days ago that you didn't get to post. After that you don't need to do anything: when there's something worth posting, the drafts page opens.
 
 ## Commands
 
@@ -166,7 +168,7 @@ Drafts open as a local HTML page (no server, no network). Each card is editable,
 - **Capture.** The hook reads the transcript path from Claude Code and ingests only new lines. It keeps user and assistant text, drops tool output and system reminders, redacts common secret patterns, and splits text into chunks of at most 1,200 characters (a chunk is one searchable piece of a message; a long prompt becomes several). A scheduled run only drafts when there are at least 3 new prompts since the last draft, and `status` says so when it skips. Standard library only, milliseconds per call, and it never fails your session.
 - **Search.** SQLite FTS5 (BM25) plus `BAAI/bge-small-en-v1.5` embeddings (cosine in numpy), fused with reciprocal rank fusion, then the top 30 reranked by a cross-encoder (`Xenova/ms-marco-MiniLM-L-6-v2`). All local, CPU only.
 - **Drafting (two model calls).** First the model reads a digest of recent work and proposes up to 4 post angles, each with a search query. Each query searches only sessions *older* than the digest window. Then the writer gets the recent digest, the retrieved history with dates, your style guide, your best and latest posts as examples, and your last drafts (so angles don't repeat). It's told not to invent numbers or streaks and to skip anything confidential; drafts are redacted again and X posts over 280 characters are dropped. Retrieval only searches saved session text, never your repos or files.
-- **Your own rules.** Put drafting rules in plain text at `~/.agent_sessions_gtm/rules.md`. They go into every draft prompt, work with any model, and are never overwritten (unlike `style.md`, which is regenerated daily).
+- **Your own rules.** Default X rules ship with the package (`gtm/default_rules.md`) and go into every draft prompt, so they work with any model. Add your own in plain text at `~/.agent_sessions_gtm/rules.md`; they are appended and win on conflicts. Neither is overwritten (unlike `style.md`, which is regenerated daily).
 - **Learning your voice.** No fine-tuning. Posts are scored `likes + 2*reposts + 3*replies`; the best become few-shot examples and `style.md` is regenerated daily from them.
 - **No loops.** Drafting runs with `GTM_DRAFTING=1`, which makes the hook exit, so the drafter never ingests itself.
 

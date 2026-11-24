@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from . import llm, notify, search, ui
 from .db import home, iso_now, kv_get, kv_set, record
@@ -15,9 +16,12 @@ def style_text() -> str:
 
 
 def rules_text() -> str:
-    """Your own hand-written drafting rules (~/.agent_sessions_gtm/rules.md). Never overwritten, unlike style.md."""
-    p = home() / "rules.md"
-    return p.read_text().strip() if p.exists() else "(none)"
+    """Bundled default rules (gtm/default_rules.md), plus your own ~/.agent_sessions_gtm/rules.md on top. Never overwritten."""
+    out = (Path(__file__).parent / "default_rules.md").read_text().strip()
+    mine = home() / "rules.md"
+    if mine.exists() and mine.read_text().strip():
+        out += "\n\nThe author's own additions (these win on any conflict):\n" + mine.read_text().strip()
+    return out
 
 
 def examples(conn, n_top: int = 8, n_recent: int = 4) -> str:
