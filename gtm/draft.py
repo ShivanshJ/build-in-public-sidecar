@@ -11,18 +11,15 @@ MIN_NEW_USER_MSGS = 3
 
 
 def style_text() -> str:
-    p = (Path(__file__).parent / "style.md").read_text().strip()
-    return p if p else DEFAULT_STYLE
+    """The style guide that ships with the package (gtm/style.md)."""
+    f = Path(__file__).parent / "style.md"
+    return (f.read_text().strip() if f.exists() else "") or DEFAULT_STYLE
 
 
 def rules_text() -> str:
-    """Bundled default rules (gtm/default_rules.md), plus your own ~/.agent_sessions_gtm/rules.md on top. Never overwritten."""
-    bundled = Path(__file__).parent / "default_rules.md"
-    out = bundled.read_text().strip() if bundled.exists() else ""
-    mine = home() / "rules.md"
-    if mine.exists() and mine.read_text().strip():
-        out += ("\n\nThe author's own additions (these win on any conflict):\n" if out else "") + mine.read_text().strip()
-    return out or "(none)"
+    """Your own extra rules (~/.agent_sessions_gtm/rules.md). Optional, never overwritten."""
+    f = home() / "rules.md"
+    return f.read_text().strip() if f.exists() and f.read_text().strip() else "(none)"
 
 
 def examples(conn, n_top: int = 8, n_recent: int = 4) -> str:
