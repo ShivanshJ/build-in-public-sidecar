@@ -28,8 +28,10 @@ git clone https://github.com/ShivanshJ/build-in-public-sidecar && cd build-in-pu
 uv tool install ".[browser]"
 ```
 
-This puts a `code_gtm` command on your PATH. 
-To update later: `git pull && uv tool install --reinstall ".[browser]"`, then `code_gtm setup` once more. 
+This puts a `code_gtm` command on your PATH.
+
+To update later: `git pull && uv tool install --reinstall ".[browser]"`, then `code_gtm setup` once more.
+
 If you installed an earlier version, which was named `gtm`, run `uv tool uninstall gtm` once first, or both will try to provide `code_gtm`.
 
 ### 2. See it work first (optional, installs nothing)
@@ -46,8 +48,7 @@ A digest of your recent work goes to `claude -p` to write the drafts. Pick a pro
 code_gtm setup
 ```
 
-This adds a `Stop` and `SessionEnd` hook to `~/.claude/settings.json` (a backup is saved next to it). 
-It backfills your existing sessions.
+This adds a `Stop` and `SessionEnd` hook to `~/.claude/settings.json` (a backup is saved next to it) and backfills your existing sessions.
 
 ### 4. Teach it your voice
 
@@ -57,19 +58,35 @@ code_gtm login linkedin     # same
 code_gtm sync               # pull your past posts and their likes/replies (lists each one as it's saved)
 ```
 
-If you're already signed in to the site in your everyday browser (Arc, Chrome, Brave, Edge, Vivaldi, Firefox, Zen or Safari; your default browser is tried first), `login` offers to reuse that: say `y` and gtm copies only that site's cookies into its own browser profile. Your browser is never changed. Chromium browsers make macOS ask for your login password to unlock their key; Safari needs Full Disk Access for your terminal (System Settings > Privacy & Security), and `login` tells you if it's missing. Say `n`, or if the copy doesn't produce a working login, a Chrome window opens instead: sign in once there ("Continue with Google" works). Either way gtm never stores your password; its session lives in a dedicated profile, because browsers don't let other programs drive your everyday one. No Chrome, or don't want browser access? Import instead: `code_gtm import-x tweets.js` (your X archive) or `code_gtm import-posts posts.txt --platform linkedin`. With no past posts, drafts use a plain default style.
+`login` first looks for a login you already have in your everyday browser (Arc, Chrome, Brave, Edge, Vivaldi, Firefox, Zen or Safari; your default is tried first).
+
+- **Say `y` to reuse it.** gtm copies only that site's cookies into its own browser profile. Your browser is never changed, and your password is never stored.
+- **Chromium browsers** make macOS ask for your login password to unlock their key. **Safari** needs Full Disk Access for your terminal (System Settings > Privacy & Security); `login` tells you if it's missing.
+- **Say `n`, or if the copy doesn't work,** a Chrome window opens instead. Sign in once there ("Continue with Google" works).
+- **No Chrome, or don't want browser access?** Import instead: `code_gtm import-x tweets.js` (your X archive) or `code_gtm import-posts posts.txt --platform linkedin`.
+
+With no past posts, drafts use a plain default style.
 
 ### 5. Draft one, then schedule it
 
 ```sh
-code_gtm draft              # lists your 5 most recent sessions: pick some (1,3), m for more, or Enter for the last day; opens the popup
-code_gtm schedule           # macOS: runs at 09:30, 13:30 and 18:30 every day
+code_gtm draft
 ```
 
-`code_gtm draft` makes 2 model calls, so it uses real tokens.
+It lists your 5 most recent Claude Code sessions. Type numbers to pick some (`1,3`), `m` to see more, or press Enter to use the last day. Then it writes the drafts and opens the popup. Each draft run makes 2 model calls, so it uses real tokens.
+
+Want to see exactly what the model will be sent first? `code_gtm draft --show-prompt` prints the full prompt and calls nothing.
+
+To run it automatically three times a day (09:30, 13:30 and 18:30):
+
+```sh
+code_gtm schedule           # macOS: installs a launchd job
+```
+
+On Linux there's no built-in scheduler. Add this line to `crontab -e` instead (same times). Cron has a minimal PATH, so use the full path from `which code_gtm`:
 
 ```
-30 9,13,18 * * *  GTM_TRIGGER=schedule /path/to/build-in-public-sidecar/.venv/bin/code_gtm tick
+30 9,13,18 * * *  GTM_TRIGGER=schedule /full/path/to/code_gtm tick
 ```
 
 ### 6. See what it wrote, and check it's working
@@ -81,14 +98,13 @@ code_gtm status             # hook, scheduler, accounts, last result of every st
 code_gtm status --web       # the same as a dashboard in your browser, with full history
 ```
 
-
 ## Commands
 
 **Run it**
 
 | Command | What it does |
 |---|---|
-| `code_gtm draft [--about "<query>"] [--hours N] [--no-send]` | Draft now. In a terminal it first offers your 5 most recent sessions (`m` shows more, numbers like `1,3` pick them, Enter drafts from everything in the last day). `--hours N` or `--about` skip the picker; `--about` grounds drafts in a search; `--no-send` prints instead of opening the popup |
+| `code_gtm draft [--about "<query>"] [--hours N] [--no-send] [--show-prompt]` | Draft now. In a terminal it first offers your 5 most recent sessions (`m` shows more, numbers like `1,3` pick them, Enter drafts from everything in the last day). `--hours N` or `--about` skip the picker; `--about` grounds drafts in a search; `--no-send` prints instead of opening the popup; `--show-prompt` prints the prompt the model would get and sends nothing |
 | `code_gtm tick [--force]` | What the scheduler runs: ingest, index, sync accounts, draft if there's new work. Prints a line per step |
 | `code_gtm schedule [--remove]` | Install or remove the macOS launchd job |
 
@@ -149,7 +165,7 @@ Drafting is two `claude -p` calls per run (find angles, write posts). Each call 
 <details>
 <summary>Re-runs don't duplicate or re-download</summary>
 
-Scheduled runs pull each account at most every `sync_hours` (default 20), so the three daily runs read your profile about once a day; `code_gtm sync` always pulls. A post is stored once, matched by its platform id (or by identical text for posts imported from a file), so syncing again only refreshes its likes and replies. Each pull re-reads your most recent ~20 posts, so older posts keep the numbers from when they were last seen. Transcript ingest is incremental.
+Scheduled runs pull each account at most every `sync_hours` (default 20), so the three daily runs read your profile about once a day; `code_gtm sync` always pulls. A post is stored once, matched by its platform id (or by identical text for posts imported from a file), so syncing again only refreshes its likes and replies. Each pull re-reads your most recent ~40 posts, so older posts keep the numbers from when they were last seen. Transcript ingest is incremental.
 </details>
 
 ## The drafts popup
