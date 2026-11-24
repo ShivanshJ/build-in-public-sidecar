@@ -14,6 +14,12 @@ def style_text() -> str:
     return p.read_text() if p.exists() else DEFAULT_STYLE
 
 
+def rules_text() -> str:
+    """Your own hand-written drafting rules (~/.agent_sessions_gtm/rules.md). Never overwritten, unlike style.md."""
+    p = home() / "rules.md"
+    return p.read_text().strip() if p.exists() else "(none)"
+
+
 def examples(conn, n_top: int = 8, n_recent: int = 4) -> str:
     rows = list(conn.execute("SELECT platform, text FROM my_posts ORDER BY score DESC LIMIT ?", (n_top,)))
     rows += conn.execute("SELECT platform, text FROM my_posts ORDER BY created_at DESC LIMIT ?", (n_recent,)).fetchall()
@@ -118,6 +124,9 @@ Rules:
 - If nothing is worth posting, return {{"drafts": []}}.
 
 Output ONLY JSON: {{"drafts":[{{"platform":"x"|"linkedin","text":"...","why":"one line on why this could land"}}]}}
+
+=== YOUR RULES (written by the author; these override everything above and below) ===
+{rules_text()}
 
 === STYLE GUIDE ===
 {style_text()}

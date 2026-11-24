@@ -671,3 +671,13 @@ def test_draft_from_picked_sessions_only_reads_those(conn, monkeypatch):
     draft.draft(conn, sessions=["a"])
     assert "alpha work" in seen["material"] and "beta work" not in seen["material"]
     assert kv_get(conn, "last_draft_ts") is None  # a hand-picked draft doesn't count as "everything covered"
+
+
+def test_rules_md_goes_into_the_prompt_and_is_optional(tmp_path, monkeypatch):
+    from gtm import draft
+    monkeypatch.setenv("GTM_HOME", str(tmp_path))
+    from gtm import db
+    c = db.connect()
+    assert "(none)" in draft.build_prompt("x", c)
+    (tmp_path / "rules.md").write_text("Never use emojis.")
+    assert "Never use emojis." in draft.build_prompt("x", c)
