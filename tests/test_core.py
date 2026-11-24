@@ -690,4 +690,4 @@ def test_show_prompt_prints_without_calling_the_model(monkeypatch, capsys):
     monkeypatch.setattr(llm, "complete", lambda p, *a, **k: sent.append(p) or '{"angles": []}')
     assert draft.draft(db.connect(), hours=1, show_prompt=True) == []
     assert not any("ghostwriting" in p for p in sent)  # the drafting prompt was shown, never sent
-    assert "AUTHOR'S GUIDANCE" in capsys.readouterr().out
+    assert "AUTHOR'S EXTRA RULES" in capsys.readouterr().out

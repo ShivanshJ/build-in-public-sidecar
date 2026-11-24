@@ -11,9 +11,15 @@ MIN_NEW_USER_MSGS = 3
 
 
 def style_text() -> str:
-    """The style guide that ships with the package (gtm/style.md)."""
-    f = Path(__file__).parent / "style.md"
-    return (f.read_text().strip() if f.exists() else "") or DEFAULT_STYLE
+    """Your voice, learned from your best posts and rewritten daily (~/.agent_sessions_gtm/style.md)."""
+    p = home() / "style.md"
+    return p.read_text() if p.exists() else DEFAULT_STYLE
+
+
+def post_guide_text() -> str:
+    """The posting guide that ships with the package (gtm/guides/post_guide.md). Edit it in the repo; never rewritten."""
+    f = Path(__file__).parent / "guides" / "post_guide.md"
+    return f.read_text().strip() if f.exists() else "(none)"
 
 
 def rules_text() -> str:
@@ -127,10 +133,13 @@ Rules:
 
 Output ONLY JSON: {{"drafts":[{{"platform":"x"|"linkedin","text":"...","why":"one line on why this could land"}}]}}
 
-=== AUTHOR'S GUIDANCE (follow what fits; the confidentiality and grounding rules above still win) ===
+=== AUTHOR'S EXTRA RULES (follow what fits; the confidentiality and grounding rules above still win) ===
 {rules_text()}
 
-=== STYLE GUIDE ===
+=== POST GUIDE (follow what fits; the confidentiality and grounding rules above still win) ===
+{post_guide_text()}
+
+=== YOUR VOICE (learned from your past posts) ===
 {style_text()}
 
 === PAST POSTS THAT DID WELL ===
