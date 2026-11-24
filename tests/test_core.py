@@ -678,6 +678,16 @@ def test_rules_md_goes_into_the_prompt_and_is_optional(tmp_path, monkeypatch):
     monkeypatch.setenv("GTM_HOME", str(tmp_path))
     from gtm import db
     c = db.connect()
-    assert "One idea per post" in draft.build_prompt("x", c)  # bundled default
+    assert "Never use emojis." not in draft.build_prompt("x", c)
     (tmp_path / "rules.md").write_text("Never use emojis.")
     assert "Never use emojis." in draft.build_prompt("x", c)
+
+
+def test_show_prompt_prints_without_calling_the_model(monkeypatch, capsys):
+    from gtm import db, draft, llm
+    monkeypatch.setattr(draft, "digest", lambda c, since, **k: "did a thing")
+    sent = []
+    monkeypatch.setattr(llm, "complete", lambda p, *a, **k: sent.append(p) or '{"angles": []}')
+    assert draft.draft(db.connect(), hours=1, show_prompt=True) == []
+    assert not any("ghostwriting" in p for p in sent)  # the drafting prompt was shown, never sent
+    assert "AUTHOR'S GUIDANCE" in capsys.readouterr().out

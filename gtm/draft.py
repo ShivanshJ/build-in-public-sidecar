@@ -11,17 +11,18 @@ MIN_NEW_USER_MSGS = 3
 
 
 def style_text() -> str:
-    p = home() / "style.md"
-    return p.read_text() if p.exists() else DEFAULT_STYLE
+    p = (Path(__file__).parent / "style.md").read_text().strip()
+    return p if p else DEFAULT_STYLE
 
 
 def rules_text() -> str:
     """Bundled default rules (gtm/default_rules.md), plus your own ~/.agent_sessions_gtm/rules.md on top. Never overwritten."""
-    out = (Path(__file__).parent / "default_rules.md").read_text().strip()
+    bundled = Path(__file__).parent / "default_rules.md"
+    out = bundled.read_text().strip() if bundled.exists() else ""
     mine = home() / "rules.md"
     if mine.exists() and mine.read_text().strip():
-        out += "\n\nThe author's own additions (these win on any conflict):\n" + mine.read_text().strip()
-    return out
+        out += ("\n\nThe author's own additions (these win on any conflict):\n" if out else "") + mine.read_text().strip()
+    return out or "(none)"
 
 
 def examples(conn, n_top: int = 8, n_recent: int = 4) -> str:
@@ -119,7 +120,7 @@ For each angle write one X post (<=280 chars) and, only when it deserves more ro
 
 Rules:
 - Ground every claim in the material. Never invent metrics, results or quotes.
-- Sound like the examples, not like marketing. No hype words. No hashtags unless the examples use them.
+- Sound like the examples. Avoid empty hype; the author's guidance below may call for clear CTAs and growth-minded hooks. No hashtags unless the examples use them.
 - Never include secrets, credentials, client or employer names, private URLs or anything confidential. Skip angles that need them.
 - Use "related past work" only where it genuinely connects to a current angle (a recurring bug, how an idea
   evolved, before vs after). Refer to timing loosely ("last month", "two weeks ago"). Never claim counts, streaks
@@ -129,7 +130,7 @@ Rules:
 
 Output ONLY JSON: {{"drafts":[{{"platform":"x"|"linkedin","text":"...","why":"one line on why this could land"}}]}}
 
-=== YOUR RULES (written by the author; these override everything above and below) ===
+=== AUTHOR'S GUIDANCE (follow what fits; the confidentiality and grounding rules above still win) ===
 {rules_text()}
 
 === STYLE GUIDE ===
@@ -164,7 +165,8 @@ def parse_drafts(out: str) -> list[dict]:
     return drafts
 
 
-def draft(conn, about: str | None = None, hours: int = 24, send: bool = True, sessions: list[str] | None = None) -> list[dict]:
+def draft(conn, about: str | None = None, hours: int = 24, send: bool = True, sessions: list[str] | None = None,
+          show_prompt: bool = False) -> list[dict]:
     """`sessions` limits the drafts to those session ids (all their work, not just the last `hours`)."""
     history = ""
     if about:
@@ -194,8 +196,12 @@ def draft(conn, about: str | None = None, hours: int = 24, send: bool = True, se
             ui.say(f"  found {history.count(chr(10) * 2) + 1 if history else 0} related older passage(s)")
     if not material.strip():
         return []
+    prompt = build_prompt(material, conn, history=history)
+    if show_prompt:
+        print(prompt)  # exactly what the model would receive; nothing is sent
+        return []
     with ui.working("asking Claude to write the posts"):
-        out = llm.complete(build_prompt(material, conn, history=history))
+        out = llm.complete(prompt)
     drafts = parse_drafts(out)
     ui.say(f"  wrote {len(drafts)} draft(s):")
     for d in drafts:

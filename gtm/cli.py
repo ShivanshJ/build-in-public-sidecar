@@ -145,7 +145,9 @@ def cmd_draft(a, conn):
         sessions = _pick_sessions(conn)
     with ui.working("building the search index"):
         search.embed_pending(conn)
-    drafts = draft(conn, about=a.about, hours=a.hours or 24, send=not a.no_send, sessions=sessions)
+    drafts = draft(conn, about=a.about, hours=a.hours or 24, send=not a.no_send, sessions=sessions, show_prompt=a.show_prompt)
+    if a.show_prompt:
+        return
     if a.no_send:
         for d in drafts:
             print(f"--- [{d['platform']}] {d['why']}\n{d['text']}\n")
@@ -383,6 +385,7 @@ def main(argv=None):
     sp.add_argument("--about", help="ground drafts in a search query instead of the last day")
     sp.add_argument("--hours", type=int, help="draft from the last N hours (skips the session picker)")
     sp.add_argument("--no-send", action="store_true", help="print instead of showing the popup")
+    sp.add_argument("--show-prompt", action="store_true", help="print the full prompt the model would get, without calling it")
     add("tick", cmd_tick, "scheduled job: ingest, index, sync, draft, popup").add_argument(
         "--force", action="store_true", help="ignore the minimum gap since the last tick")
     add("inbox", cmd_inbox, "reopen the latest drafts popup")
