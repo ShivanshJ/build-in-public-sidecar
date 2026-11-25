@@ -26,14 +26,23 @@ def _why_failed(r) -> str:
     return " ".join(str(msg or r.stderr or r.stdout or "no output").split())[:500]
 
 
-def complete(prompt: str, timeout: int = 300) -> str:
+LEAN = ["--tools", "", "--setting-sources", ""]  # no tools, no user settings: ~27k fewer input tokens per call
+DEFAULT_SYSTEM = "You are a careful writing assistant. Follow the user's instructions exactly."
+
+
+def complete(prompt: str, timeout: int = 300, schema: dict | None = None, system: str | None = None) -> str:
     """Run the prompt through `claude -p` (or GTM_LLM_CMD, which must read stdin and write stdout).
 
     With the default command we ask for JSON so token usage and cost can be logged; a custom command is
     counted as one call with unknown tokens.
     """
     custom = cfg("llm_cmd")
-    cmd = shlex.split(custom or default_cmd() + " --output-format json")
+    if custom:
+        cmd = shlex.split(custom)  # your command gets the plain prompt; schema and system are not used
+    else:
+        cmd = shlex.split(default_cmd()) + ["--output-format", "json", *LEAN, "--system-prompt", system or DEFAULT_SYSTEM]
+        if schema:
+            cmd += ["--json-schema", json.dumps(schema)]
     env = {**os.environ, "GTM_DRAFTING": "1"}
     for attempt in (1, 2):
         r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, env=env, timeout=timeout, cwd=home())
@@ -53,6 +62,8 @@ def complete(prompt: str, timeout: int = 300) -> str:
             u.get("output_tokens", 0),
             d.get("total_cost_usd", 0.0),
         )
+        if d.get("structured_output") is not None:  # set when --json-schema was passed
+            return json.dumps(d["structured_output"])
         return str(d["result"]).strip()
     except (ValueError, KeyError):
         add_usage()

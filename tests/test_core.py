@@ -714,3 +714,37 @@ def test_history_page_does_not_replace_the_latest_inbox_page(tmp_path, monkeypat
     notify.popup(d, history=True)
     assert (tmp_path / "drafts" / "latest.html").exists() and (tmp_path / "drafts" / "history.html").exists()
     assert "history" not in (tmp_path / "drafts" / "latest.html").read_text().split("<h1>")[1].split("</h1>")[0].lower()
+
+
+def test_llm_default_call_is_lean_and_structured(monkeypatch):
+    import json as _json
+    from gtm import llm
+    seen = {}
+
+    def fake_run(cmd, **k):
+        seen["cmd"] = cmd
+        out = {"result": "", "structured_output": {"drafts": []}, "usage": {"input_tokens": 2}, "total_cost_usd": 0.01}
+        return type("R", (), {"returncode": 0, "stdout": _json.dumps(out), "stderr": ""})()
+
+    monkeypatch.setattr(llm.subprocess, "run", fake_run)
+    monkeypatch.delenv("GTM_LLM_CMD", raising=False)
+    got = llm.complete("x", schema={"type": "object"}, system="sys")
+    cmd = seen["cmd"]
+    assert _json.loads(got) == {"drafts": []}
+    assert "--json-schema" in cmd and cmd[cmd.index("--system-prompt") + 1] == "sys"
+    assert cmd[cmd.index("--tools") + 1] == "" and cmd[cmd.index("--setting-sources") + 1] == ""
+
+
+def test_custom_llm_cmd_gets_no_claude_flags(monkeypatch):
+    from gtm import llm
+    seen = {}
+    monkeypatch.setenv("GTM_LLM_CMD", "mymodel --fast")
+    monkeypatch.setattr(llm.subprocess, "run", lambda cmd, **k: seen.update(cmd=cmd) or type("R", (), {"returncode": 0, "stdout": "hi", "stderr": ""})())
+    assert llm.complete("x", schema={"type": "object"}) == "hi" and seen["cmd"] == ["mymodel", "--fast"]
+
+
+def test_writer_prompt_ends_with_the_task_after_all_data():
+    from gtm import db, draft
+    p = draft.build_prompt("MAT", db.connect())
+    assert p.index("=== POST GUIDE") < p.index("=== MATERIAL") < p.index("=== TASK ===")
+    assert p.rstrip().endswith('"why":"one line on why this could land"}]}')
