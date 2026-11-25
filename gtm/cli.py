@@ -178,7 +178,10 @@ def cmd_drafts(a, conn):
         print("No drafts yet. Run `code_gtm draft`, or wait for the next scheduled run.")
         return
     if a.web:
-        notify.popup([dict(r) for r in reversed(rows)])
+        batches: dict[str, list] = {}
+        for r in rows:  # rows are newest first; keep batches newest first but each batch in the order it was written
+            batches.setdefault(r["created_at"][:16], []).append(dict(r))
+        notify.popup([d for b in batches.values() for d in sorted(b, key=lambda d: d["id"])], history=True)
         return
     color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
     bold = (lambda t: f"\033[1m{t}\033[0m") if color else (lambda t: t)

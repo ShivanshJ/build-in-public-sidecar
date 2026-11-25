@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import llm, notify, search, ui
-from .db import home, iso_now, kv_get, kv_set, record
+from .db import cfg, home, iso_now, kv_get, kv_set, record
 from .ingest import redact
 
 DEFAULT_STYLE = "No style guide yet. Write plainly in first person, be concrete, avoid hype."
@@ -74,6 +74,11 @@ def digest(conn, since: str, max_chars: int = 12000, sessions: list[str] | None 
 def _load_json(out: str) -> dict:
     a, b = out.find("{"), out.rfind("}")
     return json.loads(out[a : b + 1]) if a >= 0 and b >= 0 else {}
+
+
+def post_budget(prompts: int) -> int:
+    """How many posts to ask for: 3 for a light day, one more per 12 prompts, capped at `max_posts` (default 6)."""
+    return max(3, min(int(cfg("max_posts", 6)), 3 + prompts // 12))
 
 
 def propose_angles(material: str, max_angles: int = 4) -> list[dict]:
@@ -174,7 +179,7 @@ def parse_drafts(out: str) -> list[dict]:
 def draft(conn, about: str | None = None, hours: int = 24, send: bool = True, sessions: list[str] | None = None,
           show_prompt: bool = False) -> list[dict]:
     """`sessions` limits the drafts to those session ids (all their work, not just the last `hours`)."""
-    history = ""
+    history, n_posts = "", 3
     if about:
         ui.say(f'  searching your sessions for "{about}"')
         hits = search.search(conn, about, k=10)
@@ -191,8 +196,10 @@ def draft(conn, about: str | None = None, hours: int = 24, send: bool = True, se
             ui.say(f"  no Claude Code activity in {scope}, nothing to write about")
             return []
         ui.say(f"  read {scope}: {material.count('## project:')} project(s)")
+        where, args = (f"session_id IN ({','.join('?' * len(sessions))})", list(sessions)) if sessions else ("ts >= ?", [since])
+        n_posts = post_budget(conn.execute(f"SELECT {PROMPT_ID} FROM chunks WHERE role='user' AND {where}", args).fetchone()[0])
         with ui.working("asking Claude what's worth posting about"):
-            angles = propose_angles(material)
+            angles = propose_angles(material, max_angles=n_posts + 1)
         ui.say(f"  Claude found {len(angles)} angle(s):")
         for a in angles:
             ui.say(f"    - {ui.snippet(a.get('angle', ''), 90, 0)}")
@@ -202,7 +209,7 @@ def draft(conn, about: str | None = None, hours: int = 24, send: bool = True, se
             ui.say(f"  found {history.count(chr(10) * 2) + 1 if history else 0} related older passage(s)")
     if not material.strip():
         return []
-    prompt = build_prompt(material, conn, history=history)
+    prompt = build_prompt(material, conn, max_posts=n_posts, history=history)
     if show_prompt:
         print(prompt)  # exactly what the model would receive; nothing is sent
         return []

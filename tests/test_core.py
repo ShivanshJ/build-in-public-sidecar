@@ -552,7 +552,7 @@ def test_a_manual_draft_counts_as_the_last_draft_so_ticks_dont_redo_it(conn, mon
     from gtm.db import kv_get
 
     monkeypatch.setattr(draft, "digest", lambda c, since, **k: "## project: p\nwork")
-    monkeypatch.setattr(draft, "propose_angles", lambda m: [])
+    monkeypatch.setattr(draft, "propose_angles", lambda m, **k: [])
     monkeypatch.setattr(llm, "complete", lambda p, **k: '{"drafts":[{"platform":"x","text":"hello world","why":"w"}]}')
     monkeypatch.setattr(notify, "send_batch", lambda d: "stdout")
     draft.draft(conn, about="a topic")
@@ -665,7 +665,7 @@ def test_draft_from_picked_sessions_only_reads_those(conn, monkeypatch):
     _session(conn, "a", "/x/alpha", "2026-11-01T10:00:00.000Z", 2, text="alpha work")
     _session(conn, "b", "/x/beta", "2026-11-02T10:00:00.000Z", 2, text="beta work")
     seen = {}
-    monkeypatch.setattr(draft, "propose_angles", lambda m: seen.setdefault("material", m) and [])
+    monkeypatch.setattr(draft, "propose_angles", lambda m, **k: seen.setdefault("material", m) and [])
     monkeypatch.setattr(llm, "complete", lambda p, **k: '{"drafts":[{"platform":"x","text":"hello world","why":"w"}]}')
     monkeypatch.setattr(notify, "send_batch", lambda d: "stdout")
     draft.draft(conn, sessions=["a"])
@@ -691,3 +691,26 @@ def test_show_prompt_prints_without_calling_the_model(monkeypatch, capsys):
     assert draft.draft(db.connect(), hours=1, show_prompt=True) == []
     assert not any("ghostwriting" in p for p in sent)  # the drafting prompt was shown, never sent
     assert "AUTHOR'S EXTRA RULES" in capsys.readouterr().out
+
+
+def test_history_page_lists_newest_batch_first_with_headings(tmp_path):
+    from gtm import notify
+    mk = lambda i, ts, t: {"id": i, "platform": "x", "text": t, "why": "", "created_at": ts}
+    page = notify.render_page([mk(5, "2026-11-25T09:30:00.000Z", "newer"), mk(1, "2026-11-20T09:30:00.000Z", "older")], history=True)
+    assert page.index("newer") < page.index("older")
+    assert page.count('class="batch"') == 2 and "newest first" in page
+
+
+def test_post_budget_grows_with_work_but_is_capped():
+    from gtm import draft
+    assert [draft.post_budget(n) for n in (0, 12, 24, 36, 500)] == [3, 4, 5, 6, 6]
+
+
+def test_history_page_does_not_replace_the_latest_inbox_page(tmp_path, monkeypatch):
+    from gtm import notify
+    monkeypatch.setenv("GTM_HOME", str(tmp_path)); monkeypatch.setenv("GTM_NO_OPEN", "1")
+    d = [{"id": 1, "platform": "x", "text": "t", "why": "", "created_at": "2026-11-25T09:30:00.000Z"}]
+    notify.popup(d)
+    notify.popup(d, history=True)
+    assert (tmp_path / "drafts" / "latest.html").exists() and (tmp_path / "drafts" / "history.html").exists()
+    assert "history" not in (tmp_path / "drafts" / "latest.html").read_text().split("<h1>")[1].split("</h1>")[0].lower()

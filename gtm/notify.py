@@ -13,11 +13,13 @@ PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>gtm: __COUNT__ drafts ready</title>
+<title>gtm: __TITLE__</title>
 <style>
   body { font: 15px/1.5 -apple-system, system-ui, sans-serif; background: #f6f6f4; color: #1a1a1a; margin: 0; padding: 32px 16px; }
   main { max-width: 640px; margin: 0 auto; }
   h1 { font-size: 20px; margin: 0 0 4px; } .sub { color: #777; margin: 0 0 24px; font-size: 13px; }
+  h2.batch { font-size: 13px; margin: 28px 0 10px; color: #555; text-transform: uppercase; letter-spacing: .04em; }
+  h2.batch:first-of-type { margin-top: 0; }
   .card { background: #fff; border: 1px solid #e3e3df; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
   .meta { display: flex; gap: 10px; align-items: baseline; margin-bottom: 10px; }
   .badge { font-size: 11px; font-weight: 600; letter-spacing: .04em; padding: 2px 8px; border-radius: 99px; background: #1a1a1a; color: #fff; }
@@ -29,8 +31,8 @@ PAGE = """<!doctype html>
   a.post { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
 </style></head>
 <body><main>
-<h1>__COUNT__ drafts ready</h1>
-<p class="sub">Edit freely, then post. Nothing is sent until you click.</p>
+<h1>__TITLE__</h1>
+<p class="sub">__SUB__</p>
 __CARDS__
 </main>
 <script>
@@ -78,19 +80,30 @@ def _when(created_at: str | None) -> str:
     return when(created_at) if created_at else ""
 
 
-def render_page(drafts: list[dict]) -> str:
-    """Draft text is model output built from untrusted material, so everything is HTML-escaped."""
-    cards = "".join(
-        CARD.format(
+def render_page(drafts: list[dict], history: bool = False) -> str:
+    """Draft text is model output built from untrusted material, so everything is HTML-escaped.
+
+    history=True shows past drafts in the order given (newest batch first), with a heading per batch.
+    """
+    parts, last = [], None
+    for d in drafts:
+        batch = (d.get("created_at") or "")[:16]
+        if history and batch != last:
+            n = sum(1 for x in drafts if (x.get("created_at") or "")[:16] == batch)
+            parts.append(f'<h2 class="batch">{html.escape(_when(d.get("created_at")))} · {n} draft{"s" if n != 1 else ""}</h2>')
+            last = batch
+        parts.append(CARD.format(
             platform=d["platform"],
             label="X" if d["platform"] == "x" else "LinkedIn",
-            when=html.escape(_when(d.get("created_at"))),
+            when="" if history else html.escape(_when(d.get("created_at"))),
             why=html.escape(d.get("why", "")),
             text=html.escape(d["text"]),
-        )
-        for d in drafts
-    )
-    return PAGE.replace("__COUNT__", str(len(drafts))).replace("__CARDS__", cards)
+        ))
+    n = len(drafts)
+    title = f"Draft history: {n} drafts, newest first" if history else f"{n} drafts ready"
+    sub = ("Edits here aren't saved. Copy or post from the page." if history
+           else "Edit freely, then post. Nothing is sent until you click.")
+    return PAGE.replace("__TITLE__", title).replace("__SUB__", sub).replace("__CARDS__", "".join(parts))
 
 
 def open_file(path) -> None:
@@ -101,12 +114,14 @@ def open_file(path) -> None:
         subprocess.run([opener, str(path)], check=False)
 
 
-def popup(drafts: list[dict]):
+def popup(drafts: list[dict], history: bool = False):
+    """New drafts go to a timestamped page and latest.html (what `inbox` reopens). History has its own page, so
+    looking back never replaces the latest batch."""
     out = home() / "drafts"
     out.mkdir(exist_ok=True)
-    page = render_page(drafts)
-    path = out / f"{datetime.now():%Y%m%d-%H%M%S}.html"
-    for p in (path, out / "latest.html"):
+    page = render_page(drafts, history=history)
+    path = out / ("history.html" if history else f"{datetime.now():%Y%m%d-%H%M%S}.html")
+    for p in (path,) if history else (path, out / "latest.html"):
         p.write_text(page, encoding="utf-8")
         p.chmod(0o600)
     open_file(path)
